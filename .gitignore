@@ -2,9 +2,13 @@ node_modules
 dist
 *.local
 .DS_Store
+btcms-junit.xml
+evidence/
 
 # BTCMS session/orchestration artifacts (not part of the app)
 .btcms_turn_1_prompt.md
+.btcms_turn_2_prompt.md
+error.log
 .cursor/
 AGENTS.md
 CLAUDE.md
