@@ -1,0 +1,10 @@
+dist
+node_modules
+package-lock.json
+
+# BTCMS session/orchestration artifacts (not part of the app)
+.btcms_turn_1_prompt.md
+.cursor/
+AGENTS.md
+CLAUDE.md
+api_contract.md
