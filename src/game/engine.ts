@@ -1,3 +1,13 @@
+import {
+  HARD_DROP_POINTS,
+  SOFT_DROP_POINTS,
+  classifyClear,
+  detectTSpin,
+  isDifficultClear,
+  scoreClear,
+  type LastAction,
+} from './scoring';
+
 export const VISIBLE_COLS = 10;
 export const VISIBLE_ROWS = 20;
 export const BUFFER_ROWS = 4;
@@ -38,12 +48,31 @@ export const PIECE_COLORS: Record<PieceType, string> = {
 };
 
 export const GARBAGE_COLOR = '#6b7280';
-export const LINE_CLEAR_SCORES = [0, 100, 300, 500, 800] as const;
+export {
+  BACK_TO_BACK_MULTIPLIER,
+  COMBO_POINTS_PER_LEVEL,
+  HARD_DROP_POINTS,
+  LINE_CLEAR_SCORES,
+  SOFT_DROP_POINTS,
+  T_SPIN_SCORES,
+  baseClearScore,
+  classifyClear,
+  comboBonus,
+  detectTSpin,
+  isDifficultClear,
+  scoreClear,
+} from './scoring';
+export type { ClearType, LastAction, TSpinKind } from './scoring';
 
 export interface LockResult {
   linesCleared: number;
   isTetris: boolean;
+  isTSpin: boolean;
+  isMiniTSpin: boolean;
+  clearType: import('./scoring').ClearType;
   scoreAwarded: number;
+  backToBackAwarded: boolean;
+  combo: number;
   lockedType: PieceType;
 }
 
@@ -453,8 +482,8 @@ interface MoveRepeat {
 }
 
 export class Game {
-  readonly softDropPointsPerCell = 1;
-  readonly hardDropPointsPerCell = 2;
+  readonly softDropPointsPerCell = SOFT_DROP_POINTS;
+  readonly hardDropPointsPerCell = HARD_DROP_POINTS;
 
   board: (LockedCell | null)[][];
   active: ActivePiece | null = null;
@@ -462,6 +491,8 @@ export class Game {
   holdAvailable = true;
   score = 0;
   lines = 0;
+  combo = 0;
+  backToBackActive = false;
   elapsedMs = 0;
   gravityMs: number;
   readonly baseGravityMs: number;
@@ -485,6 +516,9 @@ export class Game {
   private gameOverReason: GameOverReason | null = null;
   private paused = false;
   private lockListeners: Array<(result: LockResult) => void> = [];
+  private lastAction: LastAction = 'spawn';
+  private lastKick: Kick | null = null;
+  private comboStreak = false;
 
   get level(): number {
     return Math.floor(this.lines / this.linesPerLevel) + 1;
@@ -646,6 +680,8 @@ export class Game {
     const next = { ...this.active, x: this.active.x + dx, y: this.active.y + dy };
     if (!this.canPlace(next)) return false;
     this.active = next;
+    this.lastAction = 'move';
+    this.lastKick = null;
     return true;
   }
 
@@ -673,6 +709,8 @@ export class Game {
       this.spawn(swapped);
     }
     this.holdAvailable = false;
+    this.lastAction = 'spawn';
+    this.lastKick = null;
     return true;
   }
 
@@ -713,6 +751,9 @@ export class Game {
     const distance = startY - landingY;
     this.active = { ...this.active, y: landingY };
     this.score += distance * this.hardDropPointsPerCell;
+    if (distance > 0) {
+      this.lastAction = this.lastAction === 'rotate' ? 'rotate' : 'drop';
+    }
     this.lockActive();
   }
 
@@ -801,6 +842,8 @@ export class Game {
       };
       if (this.canPlace(next)) {
         this.active = next;
+        this.lastAction = 'rotate';
+        this.lastKick = kick;
         return { success: true, kick };
       }
     }
@@ -811,24 +854,64 @@ export class Game {
     if (!this.active) return;
     const lockedType = this.active.type;
     const lastLockInBuffer = this.cellsOf(this.active).some((cell) => cell.y >= VISIBLE_ROWS);
+    const tSpin = detectTSpin({
+      type: this.active.type,
+      x: this.active.x,
+      y: this.active.y,
+      lastAction: this.lastAction,
+      lastKick: this.lastKick,
+      isOccupied: (x, y) => this.isCornerOccupied(x, y),
+    });
     for (const cell of this.cellsOf(this.active)) {
       if (this.inBounds(cell.x, cell.y)) {
         this.board[cell.y]![cell.x] = this.active.type;
       }
     }
     const linesCleared = this.clearFullLines();
-    const scoreAwarded = LINE_CLEAR_SCORES[linesCleared] ?? 0;
-    this.score += scoreAwarded;
+    const clearType = classifyClear(linesCleared, tSpin);
+    const isTSpin = tSpin !== 'none';
+    const isMiniTSpin = tSpin === 'mini';
+    const difficult = isDifficultClear(clearType);
+    const backToBackAwarded = difficult && this.backToBackActive;
+
+    if (linesCleared > 0) {
+      if (this.comboStreak) this.combo += 1;
+      else this.combo = 0;
+      this.comboStreak = true;
+    } else {
+      this.combo = 0;
+      this.comboStreak = false;
+    }
+
+    const awarded = scoreClear({
+      clearType,
+      level: this.level,
+      backToBack: backToBackAwarded,
+      combo: this.combo,
+    });
+    this.score += awarded.total;
+
+    if (linesCleared > 0) {
+      this.backToBackActive = difficult;
+    }
+
     this.lines += linesCleared;
     this.applyGravityForLevel();
     this.lastLock = {
       linesCleared,
       isTetris: linesCleared === 4,
-      scoreAwarded,
+      isTSpin,
+      isMiniTSpin,
+      clearType,
+      scoreAwarded: awarded.total,
+      backToBackAwarded,
+      combo: this.combo,
       lockedType,
     };
     this.holdAvailable = true;
     this.gravityElapsed = 0;
+    this.lastAction = 'spawn';
+    this.lastKick = null;
     this.spawn(this.takePiece(), { lastLockInBuffer });
     for (const listener of this.lockListeners) {
       listener(this.lastLock);
@@ -905,6 +988,12 @@ export class Game {
   private isFree(x: number, y: number): boolean {
     if (x < 0 || x >= VISIBLE_COLS || y < 0 || y >= TOTAL_ROWS) return false;
     return this.board[y]![x] === null;
+  }
+
+  private isCornerOccupied(x: number, y: number): boolean {
+    if (x < 0 || x >= VISIBLE_COLS || y < 0) return true;
+    if (y >= TOTAL_ROWS) return false;
+    return this.board[y]![x] !== null;
   }
 
   private inBounds(x: number, y: number): boolean {

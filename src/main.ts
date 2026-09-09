@@ -506,9 +506,13 @@ function paintHud(game: Game): void {
   const score = app.querySelector('[data-testid="hud-score"]');
   const level = app.querySelector('[data-testid="hud-level"]');
   const lines = app.querySelector('[data-testid="hud-lines"]');
+  const combo = app.querySelector('[data-testid="hud-combo"]');
+  const backToBack = app.querySelector('[data-testid="hud-back-to-back"]');
   if (score) score.textContent = `Score ${game.score}`;
   if (level) level.textContent = `Level ${game.level}`;
   if (lines) lines.textContent = `Lines ${game.lines}`;
+  if (combo) combo.textContent = `Combo ${game.combo}`;
+  if (backToBack) backToBack.textContent = game.backToBackActive ? 'Back-to-back' : 'No streak';
 }
 
 function paintSidebars(game: Game, holdBox: HTMLDivElement, nextQueue: HTMLDivElement): void {

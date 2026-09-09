@@ -40,9 +40,13 @@ describe('TETR-75 Clear visual hierarchy layout', () => {
     expect(first.html).toContain('data-testid="hud-score"');
     expect(first.html).toContain('data-testid="hud-level"');
     expect(first.html).toContain('data-testid="hud-lines"');
+    expect(first.html).toContain('data-testid="hud-combo"');
+    expect(first.html).toContain('data-testid="hud-back-to-back"');
     expect(first.hud.score).toBe(screen.game.score);
     expect(first.hud.level).toBe(screen.game.level);
     expect(first.hud.lines).toBe(screen.game.lines);
+    expect(first.hud.combo).toBe(screen.game.combo);
+    expect(first.hud.backToBack).toBe(screen.game.backToBackActive);
 
     screen.game.setActive('T', 4, 10, 0);
     screen.game.tryMove(-1, 0);
@@ -55,6 +59,8 @@ describe('TETR-75 Clear visual hierarchy layout', () => {
     expect(midGame.html).toContain(`data-testid="hud-score"`);
     expect(midGame.html).toContain(`data-testid="hud-level"`);
     expect(midGame.html).toContain(`data-testid="hud-lines"`);
+    expect(midGame.html).toContain(`data-testid="hud-combo"`);
+    expect(midGame.html).toContain(`data-testid="hud-back-to-back"`);
   });
 });
 
