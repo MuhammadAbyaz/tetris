@@ -70,15 +70,15 @@ export const THEMES: Record<ThemeId, ThemeTokens> = {
   },
 };
 
-/** Okabe–Ito colorblind-safe palette (distinct from Guideline defaults). */
+/** Alternate assignment of the same Okabe–Ito hues (still colorblind-safe, distinct from default). */
 export const COLORBLIND_PIECE_COLORS: Record<PieceType, string> = {
-  I: '#0072b2',
-  O: '#f0e442',
-  T: '#cc79a7',
-  S: '#009e73',
-  Z: '#d55e00',
-  J: '#56b4e9',
-  L: '#e69f00',
+  I: '#56b4e9',
+  O: '#e69f00',
+  T: '#0072b2',
+  S: '#f0e442',
+  Z: '#cc79a7',
+  J: '#009e73',
+  L: '#d55e00',
 };
 
 const HIGH_CONTRAST = {

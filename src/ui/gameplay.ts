@@ -7,6 +7,7 @@ import {
   type TimerKind,
 } from '../game/engine';
 import type { EffectsController } from '../player/effects';
+import { resolveTypography } from '../player/typography';
 import { renderTouchControls } from '../player/touch';
 
 export type ScreenView = 'menu' | 'playing';
@@ -67,6 +68,7 @@ export interface GameplayScreenOptions {
   replayAvailable?: boolean;
   appearanceTheme?: string;
   boardBackground?: string;
+  fontSize?: string;
 }
 
 export function formatElapsed(ms: number): string {
@@ -107,6 +109,7 @@ export function renderGameplayShell(input: {
   replayAvailable?: boolean;
   appearanceTheme?: string;
   boardBackground?: string;
+  fontSize?: string;
 }): GameplayRender {
   return createGameplayScreen({
     game: input.game,
@@ -118,6 +121,7 @@ export function renderGameplayShell(input: {
     replayAvailable: input.replayAvailable,
     appearanceTheme: input.appearanceTheme,
     boardBackground: input.boardBackground,
+    fontSize: input.fontSize,
   }).render();
 }
 
@@ -136,6 +140,7 @@ export class GameplayScreen {
   replayAvailable: boolean;
   appearanceTheme: string;
   boardBackground: string;
+  fontSize: string;
 
   constructor(options: GameplayScreenOptions = {}) {
     this.game = options.game ?? createGame(options.gameOptions ?? {});
@@ -147,6 +152,7 @@ export class GameplayScreen {
     this.replayAvailable = options.replayAvailable ?? false;
     this.appearanceTheme = options.appearanceTheme ?? 'classic';
     this.boardBackground = options.boardBackground ?? '#07090d';
+    this.fontSize = options.fontSize ?? 'medium';
   }
 
   render(): GameplayRender {
@@ -255,12 +261,13 @@ export class GameplayScreen {
     gameOver: GameOverModel | null,
   ): string {
     const elapsed = formatElapsed(this.game.elapsedMs);
+    const type = resolveTypography(this.fontSize);
     const timer = hud.timerVisible
       ? `<div class="hud-stat" data-testid="hud-timer" data-timer-kind="${hud.timerKind}">${formatTimerStat(hud.timerKind, hud.timerMs)}</div>`
       : '';
     return `
     <div class="shell" data-testid="${this.testId}-shell" data-layout="hold-playfield-next" data-mode="${this.game.mode}" data-theme="${escapeHtml(this.appearanceTheme)}">
-      <div class="hud-panel" data-testid="hud-panel" data-always-visible="true" data-region="score-panel">
+      <div class="hud-panel" data-testid="hud-panel" data-always-visible="true" data-region="score-panel" data-font-size="${type.fontSize}" style="--font-scale: ${type.scale}">
         <div class="hud-stat" data-testid="hud-score">Score ${hud.score}</div>
         <div class="hud-stat" data-testid="hud-high-score">Best ${this.highScore}</div>
         <div class="hud-stat" data-testid="hud-level">Level ${hud.level}</div>

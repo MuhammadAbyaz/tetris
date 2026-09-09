@@ -1,4 +1,6 @@
 import { createVersusSession, VersusSession } from './versus';
+import type { ReplayLog } from '../player/replay';
+import { ScoreRejectedError, validateLeaderboardSubmission } from './score-validation';
 
 export interface CloudSave {
   settings: {
@@ -104,13 +106,18 @@ export class GameBackend {
     displayName: string;
     mode: string;
     score: number;
+    replay?: ReplayLog;
   }): LeaderboardEntry {
+    const check = validateLeaderboardSubmission({ score: input.score, replay: input.replay });
+    if (!check.ok) {
+      throw new ScoreRejectedError(check.reason);
+    }
     const entry: LeaderboardEntry = {
       id: `score-${this.scores.length + 1}`,
       playerId: input.playerId,
       displayName: input.displayName,
       mode: input.mode,
-      score: input.score,
+      score: check.score,
       submittedAt: new Date().toISOString(),
     };
     this.scores.push(entry);

@@ -48,8 +48,19 @@ export type { AudioController, MusicTrackId, SfxEvent, SfxPlayer } from './audio
 export { breakpointForWidth, cellSizeForWidth, computeGameLayout, layoutCssVars } from './layout';
 export type { GameLayout, LayoutBreakpoint, LayoutRect } from './layout';
 
+export { isColorblindSafePalette } from './colorblind';
+
 export { createPlayerSession, renderSettingsMenu } from './settings';
 export type { PlayerSession, SettingsDraft } from './settings';
+
+export {
+  applyTypography,
+  FONT_SIZE_IDS,
+  FONT_SIZE_SCALE,
+  isFontSizeId,
+  resolveTypography,
+} from './typography';
+export type { FontSizeId, Typography } from './typography';
 
 export {
   applyAppearance,

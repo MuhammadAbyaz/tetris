@@ -1,6 +1,7 @@
 import { cloneBindings, DEFAULT_BINDINGS, type KeyBindings } from './controls';
 import { DEFAULT_MUSIC_TRACK, isMusicTrackId, type MusicTrackId } from './audio';
 import { isContrastLevel, isThemeId, type ContrastLevel, type ThemeId } from './themes';
+import { isFontSizeId, type FontSizeId } from './typography';
 
 export const PLAYER_STORAGE_KEY = 'tetris.player.v1';
 
@@ -21,6 +22,7 @@ export interface PlayerSettings {
   theme: ThemeId;
   colorblindPalette: boolean;
   contrast: ContrastLevel;
+  fontSize: FontSizeId;
 }
 
 export interface PlayerPersistState {
@@ -39,6 +41,7 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   theme: 'classic',
   colorblindPalette: false,
   contrast: 'normal',
+  fontSize: 'medium',
 };
 
 export function createMemoryStore(initial: Record<string, string> = {}): KeyValueStore {
@@ -140,6 +143,10 @@ function normalizeSettings(settings: Partial<PlayerSettings>): PlayerSettings {
     contrast: (() => {
       const contrast = String(settings.contrast ?? '');
       return isContrastLevel(contrast) ? contrast : DEFAULT_PLAYER_SETTINGS.contrast;
+    })(),
+    fontSize: (() => {
+      const fontSize = String(settings.fontSize ?? '');
+      return isFontSizeId(fontSize) ? fontSize : DEFAULT_PLAYER_SETTINGS.fontSize;
     })(),
   };
 }

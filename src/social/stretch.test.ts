@@ -8,6 +8,7 @@ import { getGlobalLeaderboard, submitScore } from './leaderboard';
 import { requestOnlineMatch, usesLocalVersusGarbage } from './matchmaking';
 import { joinSpectator } from './spectator';
 import { countGarbageRows, createVersusSession, garbageLinesForClears } from './versus';
+import { createReplayRecorder } from '../player/replay';
 
 function setupTetrisReady(game: Game, holeX = 9): void {
   for (let y = 0; y < 4; y += 1) {
@@ -56,14 +57,17 @@ describe('TETR-69 Global leaderboards (backend-persisted)', () => {
   it('TETR-69 It is persisted to the backend and appears on the global leaderboard for that mode', () => {
     const backend = createBackend();
     const game = createGame({ gravityMs: 1_000_000, pieceSequence: ['T', 'I'] });
-    game.setActive('T', 4, 12, 0);
+    const recorder = createReplayRecorder(game);
+    recorder.record('action', 'hardDrop');
     game.hardDrop();
+    const replay = recorder.finalize();
 
     const submitted = submitScore(backend, {
       playerId: 'player-1',
       displayName: 'Ada',
       mode: 'marathon',
       score: game.score,
+      replay,
     });
 
     const board = getGlobalLeaderboard(backend, 'marathon');
