@@ -11,6 +11,7 @@ import {
   type LockedCell,
   type PieceType,
 } from './game/engine';
+import { renderGameplayShell } from './ui/gameplay';
 import {
   ACHIEVEMENTS,
   createAchievementTracker,
@@ -31,7 +32,7 @@ const backend = createBackend();
 const account = createAccountClient(backend);
 const achievements = createAchievementTracker();
 
-const marathon = createMarathon();
+let marathon = createMarathon();
 achievements.attach(marathon);
 
 type View =
@@ -63,13 +64,31 @@ let controlTarget: Game | null = marathon;
 let toast = '';
 let paintView: (() => void) | null = null;
 
-if (scene === 'play' || scene === 'hold') {
+if (scene === 'play' || scene === 'hold' || scene === 'pause' || scene === 'gameover') {
   const type = marathon.active?.type ?? 'T';
   marathon.setActive(type, 3, 10, 0);
   if (scene === 'hold') {
     marathon.holdPiece();
     const nextType = marathon.active?.type ?? 'I';
     marathon.setActive(nextType, 4, 8, 0);
+  }
+  if (scene === 'pause') {
+    marathon.pause();
+  }
+  if (scene === 'gameover') {
+    for (let x = 0; x < VISIBLE_COLS - 1; x += 1) {
+      marathon.occupy(x, 0, 'J');
+    }
+    marathon.setActive('I', VISIBLE_COLS - 3, 8, 1);
+    marathon.update(75400);
+    marathon.hardDrop();
+    for (let y = 18; y < 24; y += 1) {
+      for (let x = 0; x < VISIBLE_COLS; x += 1) {
+        if (x !== 9) marathon.occupy(x, y, 'I');
+      }
+    }
+    marathon.setActive('T', 4, 4, 0);
+    marathon.hardDrop();
   }
 }
 
@@ -99,7 +118,9 @@ function resolveInitialView(value: string | null): View {
     'account',
     'achievements',
   ];
-  if (value === 'play' || value === 'hold') return 'marathon';
+  if (value === 'play' || value === 'hold' || value === 'pause' || value === 'gameover') {
+    return 'marathon';
+  }
   if (value && views.includes(value as View)) return value as View;
   return 'menu';
 }
@@ -212,31 +233,7 @@ function hubCard(view: View, title: string, copy: string): string {
 }
 
 function soloShell(title: string, game: Game, testId: string): string {
-  return `
-    <div class="shell" data-testid="${testId}-shell">
-      <aside class="panel hold-panel">
-        <h2>Hold</h2>
-        <div class="preview-box" data-testid="hold-box"></div>
-        <div class="score-box" data-testid="score">Score ${game.score}</div>
-      </aside>
-      <section class="board-wrap">
-        <h1>${title}</h1>
-        <div class="playfield" data-testid="playfield" style="--cols:${VISIBLE_COLS}"></div>
-      </section>
-      <aside class="panel next-panel">
-        <h2>Next</h2>
-        <div class="next-queue" data-testid="next-queue"></div>
-        <form class="settings" data-testid="das-arr-settings">
-          <label>DAS (ms)
-            <input id="das-input" type="number" min="0" step="10" value="${game.dasMs}" />
-          </label>
-          <label>ARR (ms)
-            <input id="arr-input" type="number" min="0" step="1" value="${game.arrMs}" />
-          </label>
-        </form>
-        <p class="help">← → move · ↓ soft · Space hard · Z/X rotate · A 180 · C hold</p>
-      </aside>
-    </div>`;
+  return renderGameplayShell({ game, title, testId }).html;
 }
 
 function dualShell(title: string, _match: VersusSession, spectating: boolean): string {
@@ -331,6 +328,18 @@ function bindView(): void {
   if (currentView === 'marathon' || currentView === 'daily') {
     const game = currentView === 'daily' ? dailyGame! : marathon;
     mountSolo(game);
+    app.querySelector('[data-action="resume"]')?.addEventListener('click', () => {
+      game.resume();
+      render();
+    });
+    app.querySelector('[data-action="restart"]')?.addEventListener('click', () => {
+      restartSolo();
+    });
+    app.querySelector('[data-action="menu"]')?.addEventListener('click', () => {
+      currentView = 'menu';
+      controlTarget = null;
+      render();
+    });
   }
   if ((currentView === 'versus' && versus) || (currentView === 'online' && online)) {
     const match = currentView === 'versus' ? versus! : online!;
@@ -388,18 +397,36 @@ function applyCloudSave(save: CloudSave): void {
   marathon.setDasArr(save.settings);
 }
 
+function restartSolo(): void {
+  if (currentView === 'daily') {
+    dailyGame = startDailyChallenge(dailyDateKey(new Date()));
+    controlTarget = dailyGame;
+  } else {
+    marathon = createMarathon();
+    achievements.attach(marathon);
+    controlTarget = marathon;
+    window.tetrisGame = marathon;
+  }
+  render();
+}
+
 function mountSolo(game: Game): void {
   const playfield = app.querySelector<HTMLDivElement>('[data-testid="playfield"]');
   const holdBox = app.querySelector<HTMLDivElement>('[data-testid="hold-box"]');
   const nextQueue = app.querySelector<HTMLDivElement>('[data-testid="next-queue"]');
-  const scoreBox = app.querySelector<HTMLDivElement>('[data-testid="score"]');
-  if (!playfield || !holdBox || !nextQueue || !scoreBox) return;
+  if (!playfield || !holdBox || !nextQueue) return;
   const cells = fillPlayfield(playfield);
   const dasInput = app.querySelector<HTMLInputElement>('#das-input');
   const arrInput = app.querySelector<HTMLInputElement>('#arr-input');
   const paint = () => {
-    paintPlayfield(game, cells);
-    paintSidebars(game, holdBox, nextQueue, scoreBox);
+    if (!game.isPaused() && !game.isOver()) {
+      paintPlayfield(game, cells);
+    }
+    paintSidebars(game, holdBox, nextQueue);
+    paintHud(game);
+    if (game.isOver() && !app.querySelector('[data-testid="game-over-screen"]')) {
+      render();
+    }
   };
   dasInput?.addEventListener('change', () => {
     const das = Number(dasInput.value);
@@ -475,12 +502,16 @@ function cellColor(locked: LockedCell): string {
   return locked === 'G' ? GARBAGE_COLOR : PIECE_COLORS[locked];
 }
 
-function paintSidebars(
-  game: Game,
-  holdBox: HTMLDivElement,
-  nextQueue: HTMLDivElement,
-  scoreBox: HTMLDivElement,
-): void {
+function paintHud(game: Game): void {
+  const score = app.querySelector('[data-testid="hud-score"]');
+  const level = app.querySelector('[data-testid="hud-level"]');
+  const lines = app.querySelector('[data-testid="hud-lines"]');
+  if (score) score.textContent = `Score ${game.score}`;
+  if (level) level.textContent = `Level ${game.level}`;
+  if (lines) lines.textContent = `Lines ${game.lines}`;
+}
+
+function paintSidebars(game: Game, holdBox: HTMLDivElement, nextQueue: HTMLDivElement): void {
   const hold = game.getHoldPreview();
   holdBox.dataset.empty = String(hold.piece === null);
   holdBox.replaceChildren(miniGrid(hold.cells, hold.color, hold.piece === null));
@@ -494,7 +525,6 @@ function paintSidebars(
       return slot;
     }),
   );
-  scoreBox.textContent = `Score ${game.score}`;
 }
 
 function miniGrid(cells: Cell[], color: string | null, empty: boolean): HTMLDivElement {
@@ -530,6 +560,16 @@ function onKeyDown(event: KeyboardEvent): void {
   const target = event.target as HTMLElement | null;
   if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
   const game = controlTarget;
+
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    if (game.isOver()) return;
+    game.togglePause();
+    render();
+    return;
+  }
+
+  if (game.isPaused() || game.isOver()) return;
 
   switch (event.key) {
     case 'ArrowLeft':
