@@ -444,6 +444,9 @@ export const DEFAULT_BASE_GRAVITY_MS = 800;
 export const DEFAULT_MIN_GRAVITY_MS = 20;
 export const GRAVITY_CURVE_BASE = 0.8;
 export const GRAVITY_CURVE_STEP = 0.007;
+export const LOCK_DELAY_MS = 500;
+export const LOCK_RESET_LIMIT = 15;
+export const LINE_CLEAR_ANIMATION_MS = 400;
 
 export interface GravityCurveOptions {
   baseGravityMs?: number;
@@ -477,6 +480,9 @@ export interface GameOptions {
   lineTarget?: number | null;
   timeLimitMs?: number | null;
   noFail?: boolean;
+  lockDelayMs?: number;
+  lockResetLimit?: number;
+  lineClearAnimationMs?: number;
 }
 
 export interface TimerDisplay {
@@ -521,6 +527,9 @@ export class Game {
   readonly lineTarget: number | null;
   readonly timeLimitMs: number | null;
   readonly noFail: boolean;
+  readonly lockDelayMs: number;
+  readonly lockResetLimit: number;
+  readonly lineClearAnimationMs: number;
 
   private nextQueue: PieceType[] = [];
   private sequence: PieceType[];
@@ -537,6 +546,12 @@ export class Game {
   private lastAction: LastAction = 'spawn';
   private lastKick: Kick | null = null;
   private comboStreak = false;
+  private lockDelayElapsed = 0;
+  private lockResetsUsed = 0;
+  private lowestY = 0;
+  private clearingRows: number[] = [];
+  private clearElapsed = 0;
+  private pendingLockInBuffer = false;
 
   get level(): number {
     return Math.floor(this.lines / this.linesPerLevel) + 1;
@@ -568,6 +583,9 @@ export class Game {
           ? ULTRA_TIME_LIMIT_MS
           : null;
     this.noFail = options.noFail ?? this.mode === 'zen';
+    this.lockDelayMs = options.lockDelayMs ?? LOCK_DELAY_MS;
+    this.lockResetLimit = options.lockResetLimit ?? LOCK_RESET_LIMIT;
+    this.lineClearAnimationMs = options.lineClearAnimationMs ?? LINE_CLEAR_ANIMATION_MS;
     this.sequence = [...(options.pieceSequence ?? [])];
     this.rng = options.rng ?? Math.random;
     this.bag = createSevenBag(this.rng);
@@ -622,6 +640,19 @@ export class Game {
 
   isPaused(): boolean {
     return this.paused;
+  }
+
+  isGrounded(): boolean {
+    if (!this.active) return false;
+    return !this.canPlace({ ...this.active, y: this.active.y - 1 });
+  }
+
+  isClearing(): boolean {
+    return this.clearingRows.length > 0;
+  }
+
+  getClearingRows(): number[] {
+    return [...this.clearingRows];
   }
 
   pause(): void {
@@ -706,10 +737,15 @@ export class Game {
   }
 
   setActive(type: PieceType, x: number, y: number, rotation: number): void {
+    this.resolveClearImmediate();
     this.active = { type, x, y, rotation: wrapRotation(rotation) };
+    this.lockDelayElapsed = 0;
+    this.lockResetsUsed = 0;
+    this.lowestY = y;
   }
 
   occupy(x: number, y: number, type: PieceType = 'I'): void {
+    this.resolveClearImmediate();
     if (!this.inBounds(x, y)) return;
     this.board[y]![x] = type;
   }
@@ -723,12 +759,14 @@ export class Game {
   }
 
   tryMove(dx: number, dy: number): boolean {
-    if (!this.active || this.gameOver || this.paused) return false;
+    if (!this.active || this.gameOver || this.paused || this.isClearing()) return false;
     const next = { ...this.active, x: this.active.x + dx, y: this.active.y + dy };
     if (!this.canPlace(next)) return false;
     this.active = next;
     this.lastAction = 'move';
     this.lastKick = null;
+    this.noteLowestY(next.y);
+    if (dx !== 0) this.applyLockReset();
     return true;
   }
 
@@ -745,7 +783,9 @@ export class Game {
   }
 
   holdPiece(): boolean {
-    if (!this.active || !this.holdAvailable || this.gameOver || this.paused) return false;
+    if (!this.active || !this.holdAvailable || this.gameOver || this.paused || this.isClearing()) {
+      return false;
+    }
     const current = this.active.type;
     if (this.hold === null) {
       this.hold = current;
@@ -791,7 +831,7 @@ export class Game {
   }
 
   hardDrop(): void {
-    if (!this.active || this.gameOver || this.paused) return;
+    if (!this.active || this.gameOver || this.paused || this.isClearing()) return;
     const startY = this.active.y;
     const landingY = this.getGhostY();
     if (landingY === null) return;
@@ -810,7 +850,17 @@ export class Game {
   }
 
   update(dtMs: number): void {
-    if (this.gameOver || this.paused) return;
+    if (this.paused) return;
+    if (this.isClearing()) {
+      this.elapsedMs += dtMs;
+      this.advanceClearAnimation(dtMs);
+      if (this.timeLimitMs !== null && this.elapsedMs >= this.timeLimitMs) {
+        this.elapsedMs = this.timeLimitMs;
+        this.endGame('time-up');
+      }
+      return;
+    }
+    if (this.gameOver) return;
     this.elapsedMs += dtMs;
     if (this.timeLimitMs !== null && this.elapsedMs >= this.timeLimitMs) {
       this.elapsedMs = this.timeLimitMs;
@@ -823,23 +873,18 @@ export class Game {
       this.softDropElapsed += dtMs;
       while (this.softDropElapsed >= this.softDropMs) {
         this.softDropElapsed -= this.softDropMs;
-        if (!this.tryMove(0, -1)) {
-          this.lockActive();
-          break;
-        }
+        if (!this.tryMove(0, -1)) break;
         this.score += this.softDropPointsPerCell;
       }
-      return;
-    }
-
-    this.gravityElapsed += dtMs;
-    while (this.gravityElapsed >= this.gravityMs) {
-      this.gravityElapsed -= this.gravityMs;
-      if (!this.tryMove(0, -1)) {
-        this.lockActive();
-        break;
+    } else {
+      this.gravityElapsed += dtMs;
+      while (this.gravityElapsed >= this.gravityMs) {
+        this.gravityElapsed -= this.gravityMs;
+        if (!this.tryMove(0, -1)) break;
       }
     }
+
+    this.advanceLockDelay(dtMs);
   }
 
   private startRepeat(dir: -1 | 1): void {
@@ -881,7 +926,9 @@ export class Game {
   }
 
   private rotateBy(steps: number): RotateResult {
-    if (!this.active || this.gameOver || this.paused) return { success: false, kick: null };
+    if (!this.active || this.gameOver || this.paused || this.isClearing()) {
+      return { success: false, kick: null };
+    }
     const from = this.active.rotation;
     const to = wrapRotation(from + steps);
     const tests = getKickTests(this.active.type, from, to);
@@ -896,6 +943,8 @@ export class Game {
         this.active = next;
         this.lastAction = 'rotate';
         this.lastKick = kick;
+        this.noteLowestY(next.y);
+        this.applyLockReset();
         return { success: true, kick };
       }
     }
@@ -919,7 +968,8 @@ export class Game {
         this.board[cell.y]![cell.x] = this.active.type;
       }
     }
-    const linesCleared = this.clearFullLines();
+    const fullRows = this.findFullRows();
+    const linesCleared = fullRows.length;
     const clearType = classifyClear(linesCleared, tSpin);
     const isTSpin = tSpin !== 'none';
     const isMiniTSpin = tSpin === 'mini';
@@ -962,38 +1012,94 @@ export class Game {
     };
     this.holdAvailable = true;
     this.gravityElapsed = 0;
+    this.lockDelayElapsed = 0;
+    this.lockResetsUsed = 0;
     this.lastAction = 'spawn';
     this.lastKick = null;
+    this.active = null;
+
     if (this.lineTarget !== null && this.lines >= this.lineTarget) {
       this.endGame('sprint-complete');
-      this.active = null;
-      for (const listener of this.lockListeners) {
-        listener(this.lastLock);
-      }
-      return;
     }
-    this.spawn(this.takePiece(), { lastLockInBuffer });
+
+    if (linesCleared > 0) {
+      this.clearingRows = fullRows;
+      this.clearElapsed = 0;
+      this.pendingLockInBuffer = lastLockInBuffer;
+    } else if (!this.gameOver) {
+      this.spawn(this.takePiece(), { lastLockInBuffer });
+    }
+
     for (const listener of this.lockListeners) {
       listener(this.lastLock);
     }
   }
 
-  private clearFullLines(): number {
-    const remaining: (LockedCell | null)[][] = [];
-    let cleared = 0;
+  private findFullRows(): number[] {
+    const rows: number[] = [];
     for (let y = 0; y < TOTAL_ROWS; y += 1) {
-      const row = this.board[y]!;
-      if (row.every((cell) => cell !== null)) {
-        cleared += 1;
-      } else {
-        remaining.push(row);
+      if (this.board[y]!.every((cell) => cell !== null)) {
+        rows.push(y);
       }
+    }
+    return rows;
+  }
+
+  private collapseClearedRows(): void {
+    const skip = new Set(this.clearingRows);
+    const remaining: (LockedCell | null)[][] = [];
+    for (let y = 0; y < TOTAL_ROWS; y += 1) {
+      if (!skip.has(y)) remaining.push(this.board[y]!);
     }
     while (remaining.length < TOTAL_ROWS) {
       remaining.push(Array.from({ length: VISIBLE_COLS }, () => null));
     }
     this.board = remaining;
-    return cleared;
+    this.clearingRows = [];
+    this.clearElapsed = 0;
+  }
+
+  private advanceClearAnimation(dtMs: number): void {
+    this.clearElapsed += dtMs;
+    if (this.clearElapsed < this.lineClearAnimationMs) return;
+    const lastLockInBuffer = this.pendingLockInBuffer;
+    this.collapseClearedRows();
+    if (this.gameOver) return;
+    this.spawn(this.takePiece(), { lastLockInBuffer });
+  }
+
+  private advanceLockDelay(dtMs: number): void {
+    if (!this.active || !this.isGrounded()) {
+      this.lockDelayElapsed = 0;
+      return;
+    }
+    this.lockDelayElapsed += dtMs;
+    if (this.lockDelayElapsed >= this.lockDelayMs) {
+      this.lockActive();
+    }
+  }
+
+  private applyLockReset(): void {
+    if (!this.active || !this.isGrounded()) {
+      this.lockDelayElapsed = 0;
+      return;
+    }
+    if (this.lockResetsUsed < this.lockResetLimit) {
+      this.lockDelayElapsed = 0;
+      this.lockResetsUsed += 1;
+    }
+  }
+
+  private noteLowestY(y: number): void {
+    if (y < this.lowestY) {
+      this.lowestY = y;
+      this.lockResetsUsed = 0;
+    }
+  }
+
+  private resolveClearImmediate(): void {
+    if (!this.isClearing()) return;
+    this.collapseClearedRows();
   }
 
   private spawn(type: PieceType, context: { lastLockInBuffer?: boolean } = {}): void {
@@ -1011,6 +1117,9 @@ export class Game {
       return;
     }
     this.active = piece;
+    this.lockDelayElapsed = 0;
+    this.lockResetsUsed = 0;
+    this.lowestY = piece.y;
   }
 
   private applyGravityForLevel(): void {
