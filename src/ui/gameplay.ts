@@ -15,6 +15,8 @@ export interface HudModel {
   score: number;
   level: number;
   lines: number;
+  combo: number;
+  backToBack: boolean;
 }
 
 export interface PauseOverlayModel {
@@ -113,7 +115,7 @@ export class GameplayScreen {
         </section>`,
         view: 'menu',
         phase: 'menu',
-        hud: { visible: false, score: 0, level: 1, lines: 0 },
+        hud: { visible: false, score: 0, level: 1, lines: 0, combo: 0, backToBack: false },
         pauseOverlay: idlePauseOverlay(),
         gameOver: null,
       };
@@ -127,6 +129,8 @@ export class GameplayScreen {
       score: this.game.score,
       level: this.game.level,
       lines: this.game.lines,
+      combo: this.game.combo,
+      backToBack: this.game.backToBackActive,
     };
     const pauseOverlay: PauseOverlayModel = paused
       ? {
@@ -195,6 +199,8 @@ export class GameplayScreen {
         <div class="hud-stat" data-testid="hud-score">Score ${hud.score}</div>
         <div class="hud-stat" data-testid="hud-level">Level ${hud.level}</div>
         <div class="hud-stat" data-testid="hud-lines">Lines ${hud.lines}</div>
+        <div class="hud-stat" data-testid="hud-combo">Combo ${hud.combo}</div>
+        <div class="hud-stat" data-testid="hud-back-to-back">${hud.backToBack ? 'Back-to-back' : 'No streak'}</div>
       </div>
       <aside class="panel hold-panel">
         <h2>Hold</h2>
