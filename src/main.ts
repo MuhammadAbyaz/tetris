@@ -27,10 +27,35 @@ import {
   VersusSession,
   type CloudSave,
 } from './social';
+import {
+  attachGameAudio,
+  actionForKey,
+  applyTouch,
+  browserStore,
+  computeGameLayout,
+  createAudioController,
+  createPlayerSession,
+  dispatchAction,
+  handleKeyUp,
+  layoutCssVars,
+  releaseTouch,
+  renderSettingsMenu,
+  type GameAction,
+  type TouchControl,
+} from './player';
 
 const backend = createBackend();
 const account = createAccountClient(backend);
 const achievements = createAchievementTracker();
+const store = browserStore();
+const audio = createAudioController();
+const player = createPlayerSession({ store, audio });
+let capturingBinding: GameAction | null = null;
+const wiredGames = new WeakSet<Game>();
+
+function handlingOptions() {
+  return { dasMs: player.settings.dasMs, arrMs: player.settings.arrMs };
+}
 
 type SoloMode = Extract<PlayMode, 'marathon' | 'sprint' | 'ultra' | 'zen'>;
 type View =
@@ -42,7 +67,8 @@ type View =
   | 'spectate'
   | 'leaderboard'
   | 'account'
-  | 'achievements';
+  | 'achievements'
+  | 'settings';
 
 const params = new URLSearchParams(window.location.search);
 const scene = params.get('scene');
@@ -54,10 +80,10 @@ if (!appRoot) {
 const app = appRoot;
 
 const soloGames: Record<SoloMode, Game> = {
-  marathon: createModeGame('marathon'),
-  sprint: createModeGame('sprint'),
-  ultra: createModeGame('ultra'),
-  zen: createModeGame('zen'),
+  marathon: createModeGame('marathon', handlingOptions()),
+  sprint: createModeGame('sprint', handlingOptions()),
+  ultra: createModeGame('ultra', handlingOptions()),
+  zen: createModeGame('zen', handlingOptions()),
 };
 let marathon = soloGames.marathon;
 achievements.attach(marathon);
@@ -70,6 +96,11 @@ let spectatorMatch: VersusSession | null = null;
 let controlTarget: Game | null = marathon;
 let toast = '';
 let paintView: (() => void) | null = null;
+
+listenToGame(marathon);
+listenToGame(soloGames.sprint);
+listenToGame(soloGames.ultra);
+listenToGame(soloGames.zen);
 
 if (scene === 'play' || scene === 'hold' || scene === 'pause' || scene === 'gameover') {
   const type = marathon.active?.type ?? 'T';
@@ -121,6 +152,7 @@ function resolveInitialView(value: string | null): View {
     'leaderboard',
     'account',
     'achievements',
+    'settings',
   ];
   if (value === 'play' || value === 'hold' || value === 'pause' || value === 'gameover') {
     return 'marathon';
@@ -159,6 +191,7 @@ function render(): void {
           ${navButton('leaderboard', 'Ranks')}
           ${navButton('account', 'Account')}
           ${navButton('achievements', 'Trophies')}
+          ${navButton('settings', 'Settings')}
         </nav>
       </header>
       ${toast ? `<div class="toast" data-testid="achievement-toast">${escapeHtml(toast)}</div>` : ''}
@@ -168,6 +201,7 @@ function render(): void {
 
   bindChrome();
   bindView();
+  applyResponsiveLayout();
 }
 
 function navButton(view: View, label: string): string {
@@ -193,6 +227,7 @@ function renderView(): string {
             ${hubCard('leaderboard', 'Global ranks', 'Submitted scores persist on the backend leaderboard.')}
             ${hubCard('account', 'Cloud save', 'Sign in on another device to restore settings and progress.')}
             ${hubCard('achievements', 'Achievements', 'Unlock and show feats such as your first Tetris.')}
+            ${hubCard('settings', 'Settings', 'Remap keys, volume, mute, and DAS/ARR handling.')}
           </div>
         </section>`;
     case 'marathon':
@@ -202,11 +237,13 @@ function renderView(): string {
       return soloShell(MODE_TITLES[currentView], soloGames[currentView], currentView);
     case 'daily':
       dailyGame ??= startDailyChallenge(dailyDateKey(new Date()));
+      listenToGame(dailyGame);
       controlTarget = dailyGame;
       return `${soloShell(`Daily ${dailyDateKey(new Date())}`, dailyGame, 'daily')}
         <p class="banner" data-testid="daily-seed">Seeded sequence for ${dailyDateKey(new Date())}</p>`;
     case 'versus':
       versus ??= createVersusSession('local', { holeColumn: 4 });
+      versus.players.forEach(listenToGame);
       controlTarget = versus.player1;
       return dualShell('Local Versus', versus, false);
     case 'online':
@@ -214,7 +251,10 @@ function renderView(): string {
         requestOnlineMatch(backend, account.userId ?? 'local-player');
         online = requestOnlineMatch(backend, 'cpu-opponent').session;
       }
-      if (online) controlTarget = online.player1;
+      if (online) {
+        online.players.forEach(listenToGame);
+        controlTarget = online.player1;
+      }
       return online
         ? dualShell('Online Versus', online, false)
         : `<p class="banner">Waiting for an opponent…</p>`;
@@ -237,6 +277,9 @@ function renderView(): string {
       return renderAccount();
     case 'achievements':
       return renderAchievements();
+    case 'settings':
+      if (!player.menuOpen) player.openSettings();
+      return renderSettingsMenu(player.draft);
   }
 }
 
@@ -248,7 +291,13 @@ function hubCard(view: View, title: string, copy: string): string {
 }
 
 function soloShell(title: string, game: Game, testId: string): string {
-  return renderGameplayShell({ game, title, testId }).html;
+  return renderGameplayShell({
+    game,
+    title,
+    testId,
+    highScore: player.highScore,
+    muted: player.audio.muted,
+  }).html;
 }
 
 function dualShell(title: string, match: VersusSession, spectating: boolean): string {
@@ -333,7 +382,14 @@ function renderAchievements(): string {
 function bindChrome(): void {
   app.querySelectorAll<HTMLButtonElement>('[data-nav]').forEach((button) => {
     button.addEventListener('click', () => {
-      currentView = button.dataset.nav as View;
+      const next = button.dataset.nav as View;
+      if (currentView === 'settings' && next !== 'settings' && player.menuOpen) {
+        player.closeSettings();
+        applySettingsToGames();
+        capturingBinding = null;
+      }
+      currentView = next;
+      if (currentView === 'settings' && !player.menuOpen) player.openSettings();
       if (isSoloMode(currentView)) controlTarget = soloGames[currentView];
       if (currentView === 'daily') {
         dailyGame ??= startDailyChallenge(dailyDateKey(new Date()));
@@ -363,6 +419,19 @@ function bindView(): void {
       controlTarget = null;
       render();
     });
+    app.querySelector('[data-action="toggle-mute"]')?.addEventListener('click', () => {
+      applyPlayerDraft({ muted: !player.audio.muted });
+      render();
+    });
+    app.querySelector('[data-action="open-settings"]')?.addEventListener('click', () => {
+      if (controlTarget && !controlTarget.isOver()) controlTarget.pause();
+      currentView = 'settings';
+      render();
+    });
+    bindTouchControls();
+  }
+  if (currentView === 'settings') {
+    bindSettingsMenu();
   }
   if ((currentView === 'versus' && versus) || (currentView === 'online' && online)) {
     const match = currentView === 'versus' ? versus! : online!;
@@ -406,9 +475,9 @@ function readAccountFields(): { username: string; password: string } {
 function persistCurrentProgress(): void {
   if (!account.token) return;
   const save: CloudSave = {
-    settings: { dasMs: marathon.dasMs, arrMs: marathon.arrMs },
+    settings: { dasMs: player.settings.dasMs, arrMs: player.settings.arrMs },
     progress: {
-      highScore: marathon.score,
+      highScore: Math.max(player.highScore, marathon.score),
       gamesPlayed: 1,
       unlockedAchievementIds: [...achievements.unlocked.keys()],
     },
@@ -417,20 +486,22 @@ function persistCurrentProgress(): void {
 }
 
 function applyCloudSave(save: CloudSave): void {
-  marathon.setDasArr(save.settings);
+  applyPlayerDraft({ dasMs: save.settings.dasMs, arrMs: save.settings.arrMs });
 }
 
 function restartSolo(): void {
   if (currentView === 'daily') {
     dailyGame = startDailyChallenge(dailyDateKey(new Date()));
     controlTarget = dailyGame;
+    listenToGame(dailyGame);
   } else if (isSoloMode(currentView)) {
-    soloGames[currentView] = createModeGame(currentView);
+    soloGames[currentView] = createModeGame(currentView, handlingOptions());
     if (currentView === 'marathon') {
       marathon = soloGames.marathon;
       achievements.attach(marathon);
     }
     controlTarget = soloGames[currentView];
+    listenToGame(controlTarget);
     window.tetrisGame = controlTarget;
   }
   render();
@@ -458,6 +529,7 @@ function mountSolo(game: Game): void {
     const das = Number(dasInput.value);
     const arr = Number(arrInput?.value);
     if (Number.isFinite(das) && Number.isFinite(arr)) {
+      applyPlayerDraft({ dasMs: das, arrMs: arr });
       game.setDasArr({ dasMs: das, arrMs: arr });
       persistCurrentProgress();
     }
@@ -543,7 +615,9 @@ function paintHud(game: Game): void {
   const combo = app.querySelector('[data-testid="hud-combo"]');
   const backToBack = app.querySelector('[data-testid="hud-back-to-back"]');
   const timer = app.querySelector('[data-testid="hud-timer"]');
+  const highScore = app.querySelector('[data-testid="hud-high-score"]');
   if (score) score.textContent = `Score ${game.score}`;
+  if (highScore) highScore.textContent = `Best ${player.highScore}`;
   if (level) level.textContent = `Level ${game.level}`;
   if (lines) lines.textContent = `Lines ${game.lines}`;
   if (combo) combo.textContent = `Combo ${game.combo}`;
@@ -609,23 +683,15 @@ function onKeyDown(event: KeyboardEvent): void {
   const target = event.target as HTMLElement | null;
   if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
 
-  if (event.key === 'Escape') {
+  if (capturingBinding) {
     event.preventDefault();
-    if (currentView === 'versus' && versus) {
-      versus.togglePause();
-      render();
-      return;
-    }
-    if (currentView === 'online' && online) {
-      online.togglePause();
-      render();
-      return;
-    }
-    if (!controlTarget || controlTarget.isOver()) return;
-    controlTarget.togglePause();
+    player.captureBinding(capturingBinding, event.key);
+    capturingBinding = null;
     render();
     return;
   }
+
+  if (currentView === 'settings') return;
 
   const p2 = versusSecondary();
   if (p2 && handleVersusP2(event, p2)) {
@@ -634,48 +700,18 @@ function onKeyDown(event: KeyboardEvent): void {
   }
 
   if (!controlTarget) return;
-  const game = controlTarget;
-  if (game.isPaused() || game.isOver()) return;
-
-  switch (event.key) {
-    case 'ArrowLeft':
-      event.preventDefault();
-      game.pressLeft();
-      break;
-    case 'ArrowRight':
-      event.preventDefault();
-      game.pressRight();
-      break;
-    case 'ArrowDown':
-      event.preventDefault();
-      game.pressSoftDrop();
-      break;
-    case ' ':
-      event.preventDefault();
-      game.hardDrop();
-      break;
-    case 'ArrowUp':
-    case 'x':
-    case 'X':
-      event.preventDefault();
-      game.rotateCw();
-      break;
-    case 'z':
-    case 'Z':
-      game.rotateCcw();
-      break;
-    case 'a':
-    case 'A':
-      game.rotate180();
-      break;
-    case 'c':
-    case 'C':
-    case 'Shift':
-      game.holdPiece();
-      break;
-    default:
-      return;
+  const action = actionForKey(player.settings.bindings, event.key);
+  if (!action) return;
+  event.preventDefault();
+  if (action === 'pause') {
+    if (currentView === 'versus' && versus) versus.togglePause();
+    else if (currentView === 'online' && online) online.togglePause();
+    else controlTarget.togglePause();
+    render();
+    return;
   }
+  if (controlTarget.isPaused() || controlTarget.isOver()) return;
+  dispatchAction(controlTarget, action);
   maybeUnlock();
 }
 
@@ -724,11 +760,7 @@ function handleVersusP2(event: KeyboardEvent, game: Game): boolean {
 }
 
 function onKeyUp(event: KeyboardEvent): void {
-  if (controlTarget) {
-    if (event.key === 'ArrowLeft') controlTarget.releaseLeft();
-    if (event.key === 'ArrowRight') controlTarget.releaseRight();
-    if (event.key === 'ArrowDown') controlTarget.releaseSoftDrop();
-  }
+  if (controlTarget) handleKeyUp(player.settings.bindings, controlTarget, event.key);
   const p2 = versusSecondary();
   if (!p2) return;
   if (event.key === 'j' || event.key === 'J') p2.releaseLeft();
@@ -756,6 +788,8 @@ function maybeUnlock(): void {
 function startLoop(): void {
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('resize', applyResponsiveLayout);
+  applyResponsiveLayout();
   let last = performance.now();
   const tick = (now: number) => {
     const dt = now - last;
@@ -771,6 +805,96 @@ function startLoop(): void {
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
+}
+
+function listenToGame(game: Game): void {
+  if (wiredGames.has(game)) return;
+  wiredGames.add(game);
+  attachGameAudio(game, audio);
+  game.onCue((cue) => {
+    if (cue === 'gameOver') {
+      player.persistScore(game.score);
+      persistCurrentProgress();
+    }
+  });
+}
+
+function applyPlayerDraft(partial: Parameters<typeof player.changeDraft>[0]): void {
+  const wasOpen = player.menuOpen;
+  if (!wasOpen) player.openSettings();
+  player.changeDraft(partial);
+  player.closeSettings();
+  applySettingsToGames();
+  if (wasOpen) player.openSettings();
+}
+
+function applySettingsToGames(): void {
+  const handling = handlingOptions();
+  for (const game of Object.values(soloGames)) game.setDasArr(handling);
+  dailyGame?.setDasArr(handling);
+  versus?.players.forEach((game) => game.setDasArr(handling));
+  online?.players.forEach((game) => game.setDasArr(handling));
+}
+
+function bindTouchControls(): void {
+  app.querySelectorAll<HTMLButtonElement>('[data-touch]').forEach((button) => {
+    const control = button.dataset.touch as TouchControl;
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      if (!controlTarget || controlTarget.isPaused() || controlTarget.isOver()) return;
+      applyTouch(controlTarget, control);
+      maybeUnlock();
+    });
+    button.addEventListener('pointerup', () => {
+      if (controlTarget) releaseTouch(controlTarget, control);
+    });
+    button.addEventListener('pointerleave', () => {
+      if (controlTarget) releaseTouch(controlTarget, control);
+    });
+  });
+}
+
+function bindSettingsMenu(): void {
+  const volume = app.querySelector<HTMLInputElement>('[data-testid="settings-volume"]');
+  const mute = app.querySelector<HTMLInputElement>('[data-testid="settings-mute"]');
+  const das = app.querySelector<HTMLInputElement>('[data-testid="settings-das"]');
+  const arr = app.querySelector<HTMLInputElement>('[data-testid="settings-arr"]');
+  volume?.addEventListener('input', () => {
+    player.changeDraft({ volume: Number(volume.value) / 100 });
+  });
+  mute?.addEventListener('change', () => {
+    player.changeDraft({ muted: mute.checked });
+  });
+  das?.addEventListener('change', () => {
+    player.changeDraft({ dasMs: Number(das.value) });
+  });
+  arr?.addEventListener('change', () => {
+    player.changeDraft({ arrMs: Number(arr.value) });
+  });
+  app.querySelectorAll<HTMLButtonElement>('[data-binding]').forEach((button) => {
+    button.addEventListener('click', () => {
+      capturingBinding = (button.dataset.binding as GameAction | undefined) ?? null;
+      button.classList.add('is-listening');
+    });
+  });
+  app.querySelector('[data-action="close-settings"]')?.addEventListener('click', () => {
+    player.closeSettings();
+    applySettingsToGames();
+    currentView = 'menu';
+    capturingBinding = null;
+    render();
+  });
+}
+
+function applyResponsiveLayout(): void {
+  const layout = computeGameLayout(window.innerWidth);
+  const vars = layoutCssVars(layout);
+  for (const [name, value] of Object.entries(vars)) {
+    document.documentElement.style.setProperty(name, value);
+  }
+  document.documentElement.dataset.bp = layout.breakpoint;
+  app.dataset.bp = layout.breakpoint;
+  app.dataset.overflowX = String(layout.overflowX);
 }
 
 function escapeHtml(value: string): string {
