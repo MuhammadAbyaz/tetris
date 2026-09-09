@@ -2,15 +2,31 @@ export {
   BUFFER_ROWS,
   createGame,
   createSevenBag,
+  DEFAULT_BASE_GRAVITY_MS,
+  DEFAULT_MIN_GRAVITY_MS,
+  fallSpeedCellsPerSecond,
   GARBAGE_COLOR,
   Game,
+  GRAVITY_CURVE_BASE,
+  GRAVITY_CURVE_STEP,
+  gravityMsForLevel,
   LINE_CLEAR_SCORES,
+  LINES_PER_LEVEL,
   PIECE_COLORS,
   PIECE_TYPES,
   VISIBLE_COLS,
   VISIBLE_ROWS,
 } from './engine';
-export type { ActivePiece, Cell, GameOptions, LockResult, LockedCell, PieceType } from './engine';
+export type {
+  ActivePiece,
+  Cell,
+  GameOptions,
+  GameOverReason,
+  GravityCurveOptions,
+  LockResult,
+  LockedCell,
+  PieceType,
+} from './engine';
 
 export interface GameConfig {
   readonly boardWidth: number;

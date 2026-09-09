@@ -29,6 +29,7 @@ export interface GameOverModel {
   lines: number;
   level: number;
   elapsedMs: number;
+  reason: 'block-out' | 'top-out' | null;
 }
 
 export interface GameplayRender {
@@ -141,6 +142,7 @@ export class GameplayScreen {
           lines: this.game.lines,
           level: this.game.level,
           elapsedMs: this.game.elapsedMs,
+          reason: this.game.getGameOverReason(),
         }
       : null;
 
@@ -165,7 +167,9 @@ export class GameplayScreen {
   selectRestart(): void {
     this.view = 'playing';
     this.game = createGame({
-      gravityMs: this.game.gravityMs,
+      gravityMs: this.game.baseGravityMs,
+      minGravityMs: this.game.minGravityMs,
+      linesPerLevel: this.game.linesPerLevel,
       softDropMs: this.game.softDropMs,
       dasMs: this.game.dasMs,
       arrMs: this.game.arrMs,
@@ -215,8 +219,9 @@ export class GameplayScreen {
           }
           ${
             over && gameOver
-              ? `<div class="game-over-screen" data-testid="game-over-screen">
+              ? `<div class="game-over-screen" data-testid="game-over-screen" data-reason="${gameOver.reason ?? ''}">
                   <h2>Game over</h2>
+                  <p class="game-over-reason" data-testid="game-over-reason">${formatGameOverReason(gameOver.reason)}</p>
                   <dl class="final-stats">
                     <div><dt>Score</dt><dd data-testid="final-score">${gameOver.score}</dd></div>
                     <div><dt>Lines</dt><dd data-testid="final-lines">${gameOver.lines}</dd></div>
@@ -247,6 +252,12 @@ export class GameplayScreen {
       </aside>
     </div>`;
   }
+}
+
+function formatGameOverReason(reason: GameOverModel['reason']): string {
+  if (reason === 'block-out') return 'Block out';
+  if (reason === 'top-out') return 'Top out';
+  return 'No valid spawn';
 }
 
 function idlePauseOverlay(): PauseOverlayModel {
