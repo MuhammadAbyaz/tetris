@@ -434,6 +434,7 @@ export class Game {
   holdAvailable = true;
   score = 0;
   lines = 0;
+  elapsedMs = 0;
   gravityMs: number;
   softDropMs: number;
   dasMs: number;
@@ -450,7 +451,12 @@ export class Game {
   private softDropHeld = false;
   private moveRepeat: MoveRepeat | null = null;
   private gameOver = false;
+  private paused = false;
   private lockListeners: Array<(result: LockResult) => void> = [];
+
+  get level(): number {
+    return Math.floor(this.lines / 10) + 1;
+  }
 
   constructor(options: GameOptions = {}) {
     this.gravityMs = options.gravityMs ?? 800;
@@ -489,6 +495,28 @@ export class Game {
 
   isOver(): boolean {
     return this.gameOver;
+  }
+
+  isPaused(): boolean {
+    return this.paused;
+  }
+
+  pause(): void {
+    if (this.gameOver) return;
+    this.paused = true;
+    this.moveRepeat = null;
+    this.softDropHeld = false;
+    this.softDropElapsed = 0;
+  }
+
+  resume(): void {
+    if (this.gameOver) return;
+    this.paused = false;
+  }
+
+  togglePause(): void {
+    if (this.paused) this.resume();
+    else this.pause();
   }
 
   onLock(listener: (result: LockResult) => void): () => void {
@@ -572,7 +600,7 @@ export class Game {
   }
 
   tryMove(dx: number, dy: number): boolean {
-    if (!this.active || this.gameOver) return false;
+    if (!this.active || this.gameOver || this.paused) return false;
     const next = { ...this.active, x: this.active.x + dx, y: this.active.y + dy };
     if (!this.canPlace(next)) return false;
     this.active = next;
@@ -592,7 +620,7 @@ export class Game {
   }
 
   holdPiece(): boolean {
-    if (!this.active || !this.holdAvailable || this.gameOver) return false;
+    if (!this.active || !this.holdAvailable || this.gameOver || this.paused) return false;
     const current = this.active.type;
     if (this.hold === null) {
       this.hold = current;
@@ -607,10 +635,12 @@ export class Game {
   }
 
   pressLeft(): void {
+    if (this.paused || this.gameOver) return;
     this.startRepeat(-1);
   }
 
   pressRight(): void {
+    if (this.paused || this.gameOver) return;
     this.startRepeat(1);
   }
 
@@ -623,6 +653,7 @@ export class Game {
   }
 
   pressSoftDrop(): void {
+    if (this.paused || this.gameOver) return;
     this.softDropHeld = true;
     this.softDropElapsed = 0;
   }
@@ -633,7 +664,7 @@ export class Game {
   }
 
   hardDrop(): void {
-    if (!this.active || this.gameOver) return;
+    if (!this.active || this.gameOver || this.paused) return;
     const startY = this.active.y;
     const landingY = this.getGhostY();
     if (landingY === null) return;
@@ -649,7 +680,8 @@ export class Game {
   }
 
   update(dtMs: number): void {
-    if (this.gameOver) return;
+    if (this.gameOver || this.paused) return;
+    this.elapsedMs += dtMs;
     this.advanceRepeat(dtMs);
 
     if (this.softDropHeld) {
@@ -714,7 +746,7 @@ export class Game {
   }
 
   private rotateBy(steps: number): RotateResult {
-    if (!this.active || this.gameOver) return { success: false, kick: null };
+    if (!this.active || this.gameOver || this.paused) return { success: false, kick: null };
     const from = this.active.rotation;
     const to = wrapRotation(from + steps);
     const tests = getKickTests(this.active.type, from, to);
