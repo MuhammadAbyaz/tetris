@@ -404,8 +404,36 @@ export function createSevenBag(rng: () => number = Math.random) {
   };
 }
 
+export type GameOverReason = 'block-out' | 'top-out';
+
+export const LINES_PER_LEVEL = 10;
+export const DEFAULT_BASE_GRAVITY_MS = 800;
+export const DEFAULT_MIN_GRAVITY_MS = 20;
+export const GRAVITY_CURVE_BASE = 0.8;
+export const GRAVITY_CURVE_STEP = 0.007;
+
+export interface GravityCurveOptions {
+  baseGravityMs?: number;
+  minGravityMs?: number;
+}
+
+export function gravityMsForLevel(level: number, options: GravityCurveOptions = {}): number {
+  const baseGravityMs = options.baseGravityMs ?? DEFAULT_BASE_GRAVITY_MS;
+  const minGravityMs = options.minGravityMs ?? DEFAULT_MIN_GRAVITY_MS;
+  const n = Math.max(1, Math.floor(level));
+  const factor = Math.max(0.01, GRAVITY_CURVE_BASE - (n - 1) * GRAVITY_CURVE_STEP);
+  const computed = baseGravityMs * factor ** (n - 1);
+  return Math.max(minGravityMs, computed);
+}
+
+export function fallSpeedCellsPerSecond(gravityMs: number): number {
+  return 1000 / Math.max(1, gravityMs);
+}
+
 export interface GameOptions {
   gravityMs?: number;
+  minGravityMs?: number;
+  linesPerLevel?: number;
   softDropMs?: number;
   dasMs?: number;
   arrMs?: number;
@@ -436,6 +464,9 @@ export class Game {
   lines = 0;
   elapsedMs = 0;
   gravityMs: number;
+  readonly baseGravityMs: number;
+  readonly minGravityMs: number;
+  readonly linesPerLevel: number;
   softDropMs: number;
   dasMs: number;
   arrMs: number;
@@ -451,15 +482,22 @@ export class Game {
   private softDropHeld = false;
   private moveRepeat: MoveRepeat | null = null;
   private gameOver = false;
+  private gameOverReason: GameOverReason | null = null;
   private paused = false;
   private lockListeners: Array<(result: LockResult) => void> = [];
 
   get level(): number {
-    return Math.floor(this.lines / 10) + 1;
+    return Math.floor(this.lines / this.linesPerLevel) + 1;
   }
 
   constructor(options: GameOptions = {}) {
-    this.gravityMs = options.gravityMs ?? 800;
+    this.baseGravityMs = options.gravityMs ?? DEFAULT_BASE_GRAVITY_MS;
+    this.minGravityMs = options.minGravityMs ?? DEFAULT_MIN_GRAVITY_MS;
+    this.linesPerLevel = options.linesPerLevel ?? LINES_PER_LEVEL;
+    this.gravityMs = gravityMsForLevel(1, {
+      baseGravityMs: this.baseGravityMs,
+      minGravityMs: this.minGravityMs,
+    });
     this.softDropMs = options.softDropMs ?? 40;
     this.dasMs = options.dasMs ?? 167;
     this.arrMs = options.arrMs ?? 33;
@@ -495,6 +533,10 @@ export class Game {
 
   isOver(): boolean {
     return this.gameOver;
+  }
+
+  getGameOverReason(): GameOverReason | null {
+    return this.gameOverReason;
   }
 
   isPaused(): boolean {
@@ -535,7 +577,7 @@ export class Game {
 
     for (let i = 0; i < count; i += 1) {
       if (this.board[TOTAL_ROWS - 1]!.some((cell) => cell !== null)) {
-        this.gameOver = true;
+        this.endGame(this.bufferHasLockedBlocks() ? 'top-out' : 'block-out');
       }
       for (let y = TOTAL_ROWS - 1; y > 0; y -= 1) {
         this.board[y] = this.board[y - 1]!;
@@ -544,7 +586,7 @@ export class Game {
     }
 
     if (this.active && !this.canPlace(this.active) && !this.tryMove(0, 1)) {
-      this.gameOver = true;
+      this.endGame(this.bufferHasLockedBlocks() ? 'top-out' : 'block-out');
     }
   }
 
@@ -768,6 +810,7 @@ export class Game {
   private lockActive(): void {
     if (!this.active) return;
     const lockedType = this.active.type;
+    const lastLockInBuffer = this.cellsOf(this.active).some((cell) => cell.y >= VISIBLE_ROWS);
     for (const cell of this.cellsOf(this.active)) {
       if (this.inBounds(cell.x, cell.y)) {
         this.board[cell.y]![cell.x] = this.active.type;
@@ -777,6 +820,7 @@ export class Game {
     const scoreAwarded = LINE_CLEAR_SCORES[linesCleared] ?? 0;
     this.score += scoreAwarded;
     this.lines += linesCleared;
+    this.applyGravityForLevel();
     this.lastLock = {
       linesCleared,
       isTetris: linesCleared === 4,
@@ -785,7 +829,7 @@ export class Game {
     };
     this.holdAvailable = true;
     this.gravityElapsed = 0;
-    this.spawn(this.takePiece());
+    this.spawn(this.takePiece(), { lastLockInBuffer });
     for (const listener of this.lockListeners) {
       listener(this.lastLock);
     }
@@ -809,14 +853,33 @@ export class Game {
     return cleared;
   }
 
-  private spawn(type: PieceType): void {
+  private spawn(type: PieceType, context: { lastLockInBuffer?: boolean } = {}): void {
     const piece: ActivePiece = { type, x: 3, y: VISIBLE_ROWS, rotation: 0 };
     if (!this.canPlace(piece)) {
       this.active = piece;
-      this.gameOver = true;
+      this.endGame(context.lastLockInBuffer ? 'top-out' : 'block-out');
       return;
     }
     this.active = piece;
+  }
+
+  private applyGravityForLevel(): void {
+    this.gravityMs = gravityMsForLevel(this.level, {
+      baseGravityMs: this.baseGravityMs,
+      minGravityMs: this.minGravityMs,
+    });
+  }
+
+  private endGame(reason: GameOverReason): void {
+    this.gameOver = true;
+    this.gameOverReason = reason;
+  }
+
+  private bufferHasLockedBlocks(): boolean {
+    for (let y = VISIBLE_ROWS; y < TOTAL_ROWS; y += 1) {
+      if (this.board[y]!.some((cell) => cell !== null)) return true;
+    }
+    return false;
   }
 
   private takePiece(): PieceType {

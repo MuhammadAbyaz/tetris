@@ -81,7 +81,9 @@ describe('TETR-76 Game-over screen with final stats', () => {
     expect(rendered.gameOver?.lines).toBe(game.lines);
     expect(rendered.gameOver?.level).toBe(game.level);
     expect(rendered.gameOver?.elapsedMs).toBe(game.elapsedMs);
+    expect(rendered.gameOver?.reason).toBe(game.getGameOverReason());
     expect(rendered.html).toContain('data-testid="game-over-screen"');
+    expect(rendered.html).toContain('data-testid="game-over-reason"');
     expect(rendered.html).toContain(`data-testid="final-score"`);
     expect(rendered.html).toContain(String(game.score));
     expect(rendered.html).toContain(`data-testid="final-lines"`);
