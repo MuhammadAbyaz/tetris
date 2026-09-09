@@ -6,6 +6,7 @@ import {
   type GameOverReason,
   type TimerKind,
 } from '../game/engine';
+import { renderTouchControls } from '../player/touch';
 
 export type ScreenView = 'menu' | 'playing';
 export type ScreenPhase = 'playing' | 'paused' | 'game-over' | 'menu';
@@ -59,6 +60,8 @@ export interface GameplayScreenOptions {
   gameOptions?: GameOptions;
   title?: string;
   testId?: string;
+  highScore?: number;
+  muted?: boolean;
 }
 
 export function formatElapsed(ms: number): string {
@@ -93,11 +96,15 @@ export function renderGameplayShell(input: {
   game: Game;
   title?: string;
   testId?: string;
+  highScore?: number;
+  muted?: boolean;
 }): GameplayRender {
   return createGameplayScreen({
     game: input.game,
     title: input.title,
     testId: input.testId,
+    highScore: input.highScore,
+    muted: input.muted,
   }).render();
 }
 
@@ -110,11 +117,15 @@ export class GameplayScreen {
   view: ScreenView = 'playing';
   title: string;
   testId: string;
+  highScore: number;
+  muted: boolean;
 
   constructor(options: GameplayScreenOptions = {}) {
     this.game = options.game ?? createGame(options.gameOptions ?? {});
     this.title = options.title ?? 'Marathon';
     this.testId = options.testId ?? 'gameplay';
+    this.highScore = options.highScore ?? 0;
+    this.muted = options.muted ?? false;
   }
 
   render(): GameplayRender {
@@ -228,13 +239,18 @@ export class GameplayScreen {
       : '';
     return `
     <div class="shell" data-testid="${this.testId}-shell" data-layout="hold-playfield-next" data-mode="${this.game.mode}">
-      <div class="hud-panel" data-testid="hud-panel" data-always-visible="true">
+      <div class="hud-panel" data-testid="hud-panel" data-always-visible="true" data-region="score-panel">
         <div class="hud-stat" data-testid="hud-score">Score ${hud.score}</div>
+        <div class="hud-stat" data-testid="hud-high-score">Best ${this.highScore}</div>
         <div class="hud-stat" data-testid="hud-level">Level ${hud.level}</div>
         <div class="hud-stat" data-testid="hud-lines">Lines ${hud.lines}</div>
         <div class="hud-stat" data-testid="hud-combo">Combo ${hud.combo}</div>
         <div class="hud-stat" data-testid="hud-back-to-back">${hud.backToBack ? 'Back-to-back' : 'No streak'}</div>
         ${timer}
+        <div class="hud-actions">
+          <button type="button" data-action="toggle-mute" data-testid="mute-toggle" data-muted="${this.muted}">${this.muted ? 'Unmute' : 'Mute'}</button>
+          <button type="button" data-action="open-settings" data-testid="open-settings">Settings</button>
+        </div>
       </div>
       <aside class="panel hold-panel">
         <h2>Hold</h2>
@@ -295,6 +311,7 @@ export class GameplayScreen {
         </form>
         <p class="help">← → move · ↓ soft · Space hard · Z/X rotate · A 180 · C hold · Esc pause</p>
       </aside>
+      ${renderTouchControls()}
     </div>`;
   }
 }

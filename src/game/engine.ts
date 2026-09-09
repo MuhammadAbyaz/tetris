@@ -436,6 +436,7 @@ export function createSevenBag(rng: () => number = Math.random) {
 export type GameOverReason = 'block-out' | 'top-out' | 'sprint-complete' | 'time-up';
 export type PlayMode = 'marathon' | 'sprint' | 'ultra' | 'zen' | 'versus';
 export type TimerKind = 'elapsed' | 'countdown';
+export type GameCue = 'move' | 'rotate' | 'lock' | 'lineClear' | 'levelUp' | 'gameOver';
 
 export const LINES_PER_LEVEL = 10;
 export const SPRINT_LINE_TARGET = 40;
@@ -552,6 +553,7 @@ export class Game {
   private clearingRows: number[] = [];
   private clearElapsed = 0;
   private pendingLockInBuffer = false;
+  private cueListeners: Array<(cue: GameCue) => void> = [];
 
   get level(): number {
     return Math.floor(this.lines / this.linesPerLevel) + 1;
@@ -680,6 +682,13 @@ export class Game {
     };
   }
 
+  onCue(listener: (cue: GameCue) => void): () => void {
+    this.cueListeners.push(listener);
+    return () => {
+      this.cueListeners = this.cueListeners.filter((fn) => fn !== listener);
+    };
+  }
+
   injectGarbage(count: number, holeColumn?: number): void {
     if (count <= 0 || (this.gameOver && !this.noFail)) return;
     const hole =
@@ -766,7 +775,10 @@ export class Game {
     this.lastAction = 'move';
     this.lastKick = null;
     this.noteLowestY(next.y);
-    if (dx !== 0) this.applyLockReset();
+    if (dx !== 0) {
+      this.applyLockReset();
+      this.emitCue('move');
+    }
     return true;
   }
 
@@ -945,6 +957,7 @@ export class Game {
         this.lastKick = kick;
         this.noteLowestY(next.y);
         this.applyLockReset();
+        this.emitCue('rotate');
         return { success: true, kick };
       }
     }
@@ -997,6 +1010,7 @@ export class Game {
       this.backToBackActive = difficult;
     }
 
+    const levelBefore = this.level;
     this.lines += linesCleared;
     this.applyGravityForLevel();
     this.lastLock = {
@@ -1033,6 +1047,9 @@ export class Game {
     for (const listener of this.lockListeners) {
       listener(this.lastLock);
     }
+    this.emitCue('lock');
+    if (linesCleared > 0) this.emitCue('lineClear');
+    if (this.level > levelBefore) this.emitCue('levelUp');
   }
 
   private findFullRows(): number[] {
@@ -1135,6 +1152,11 @@ export class Game {
     }
     this.gameOver = true;
     this.gameOverReason = reason;
+    this.emitCue('gameOver');
+  }
+
+  private emitCue(cue: GameCue): void {
+    for (const listener of this.cueListeners) listener(cue);
   }
 
   private bufferHasLockedBlocks(): boolean {
