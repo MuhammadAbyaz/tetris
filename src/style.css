@@ -151,6 +151,133 @@ body {
   color: var(--muted);
 }
 
+.app-shell {
+  width: min(1100px, calc(100vw - 24px));
+  display: grid;
+  gap: 16px;
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.nav button,
+.actions button,
+.hub-card {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.nav button.is-active,
+.hub-card:hover,
+.actions button:hover {
+  border-color: #7dd3fc;
+}
+
+.hub h1,
+.wide h1,
+.versus-wrap h1 {
+  margin: 0 0 8px;
+}
+
+.lede,
+.banner,
+.help {
+  color: var(--muted);
+}
+
+.hub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.hub-card {
+  text-align: left;
+}
+
+.hub-card h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.hub-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.versus-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.playfield-sm .cell {
+  width: 20px;
+  height: 20px;
+}
+
+.wide {
+  min-width: min(520px, 100%);
+}
+
+.wide table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.wide th,
+.wide td {
+  text-align: left;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.trophy-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.trophy-list li {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  background: #0e1118;
+  border-radius: 8px;
+}
+
+.toast {
+  background: #14532d;
+  border: 1px solid #22c55e;
+  color: #dcfce7;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.account-form .actions {
+  display: flex;
+  gap: 8px;
+}
+
 @media (max-width: 720px) {
   .shell {
     grid-template-columns: 1fr;
