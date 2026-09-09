@@ -313,6 +313,14 @@ body {
   gap: 16px;
 }
 
+.board-wrap.is-eliminated {
+  opacity: 0.45;
+}
+
+.board-wrap.is-winner h2 {
+  color: #86efac;
+}
+
 .playfield-sm .cell {
   width: 20px;
   height: 20px;

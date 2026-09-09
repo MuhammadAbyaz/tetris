@@ -1,4 +1,11 @@
-import { createGame, VISIBLE_COLS, type Game, type GameOptions } from '../game/engine';
+import {
+  createGame,
+  VISIBLE_COLS,
+  type Game,
+  type GameOptions,
+  type GameOverReason,
+  type TimerKind,
+} from '../game/engine';
 
 export type ScreenView = 'menu' | 'playing';
 export type ScreenPhase = 'playing' | 'paused' | 'game-over' | 'menu';
@@ -17,6 +24,9 @@ export interface HudModel {
   lines: number;
   combo: number;
   backToBack: boolean;
+  timerVisible: boolean;
+  timerKind: TimerKind;
+  timerMs: number;
 }
 
 export interface PauseOverlayModel {
@@ -31,7 +41,8 @@ export interface GameOverModel {
   lines: number;
   level: number;
   elapsedMs: number;
-  reason: 'block-out' | 'top-out' | null;
+  reason: GameOverReason | null;
+  title: string;
 }
 
 export interface GameplayRender {
@@ -115,7 +126,17 @@ export class GameplayScreen {
         </section>`,
         view: 'menu',
         phase: 'menu',
-        hud: { visible: false, score: 0, level: 1, lines: 0, combo: 0, backToBack: false },
+        hud: {
+          visible: false,
+          score: 0,
+          level: 1,
+          lines: 0,
+          combo: 0,
+          backToBack: false,
+          timerVisible: false,
+          timerKind: 'elapsed',
+          timerMs: 0,
+        },
         pauseOverlay: idlePauseOverlay(),
         gameOver: null,
       };
@@ -124,6 +145,7 @@ export class GameplayScreen {
     const over = this.game.isOver();
     const paused = this.game.isPaused();
     const phase: ScreenPhase = over ? 'game-over' : paused ? 'paused' : 'playing';
+    const timer = this.game.getTimerDisplay();
     const hud: HudModel = {
       visible: true,
       score: this.game.score,
@@ -131,6 +153,9 @@ export class GameplayScreen {
       lines: this.game.lines,
       combo: this.game.combo,
       backToBack: this.game.backToBackActive,
+      timerVisible: timer.visible,
+      timerKind: timer.kind,
+      timerMs: timer.ms,
     };
     const pauseOverlay: PauseOverlayModel = paused
       ? {
@@ -147,6 +172,7 @@ export class GameplayScreen {
           level: this.game.level,
           elapsedMs: this.game.elapsedMs,
           reason: this.game.getGameOverReason(),
+          title: gameOverTitle(this.game.getGameOverReason()),
         }
       : null;
 
@@ -178,6 +204,10 @@ export class GameplayScreen {
       dasMs: this.game.dasMs,
       arrMs: this.game.arrMs,
       nextQueueSize: this.game.nextQueueSize,
+      mode: this.game.mode,
+      lineTarget: this.game.lineTarget,
+      timeLimitMs: this.game.timeLimitMs,
+      noFail: this.game.noFail,
     });
   }
 
@@ -193,14 +223,18 @@ export class GameplayScreen {
     gameOver: GameOverModel | null,
   ): string {
     const elapsed = formatElapsed(this.game.elapsedMs);
+    const timer = hud.timerVisible
+      ? `<div class="hud-stat" data-testid="hud-timer" data-timer-kind="${hud.timerKind}">${formatTimerStat(hud.timerKind, hud.timerMs)}</div>`
+      : '';
     return `
-    <div class="shell" data-testid="${this.testId}-shell" data-layout="hold-playfield-next">
+    <div class="shell" data-testid="${this.testId}-shell" data-layout="hold-playfield-next" data-mode="${this.game.mode}">
       <div class="hud-panel" data-testid="hud-panel" data-always-visible="true">
         <div class="hud-stat" data-testid="hud-score">Score ${hud.score}</div>
         <div class="hud-stat" data-testid="hud-level">Level ${hud.level}</div>
         <div class="hud-stat" data-testid="hud-lines">Lines ${hud.lines}</div>
         <div class="hud-stat" data-testid="hud-combo">Combo ${hud.combo}</div>
         <div class="hud-stat" data-testid="hud-back-to-back">${hud.backToBack ? 'Back-to-back' : 'No streak'}</div>
+        ${timer}
       </div>
       <aside class="panel hold-panel">
         <h2>Hold</h2>
@@ -226,13 +260,18 @@ export class GameplayScreen {
           ${
             over && gameOver
               ? `<div class="game-over-screen" data-testid="game-over-screen" data-reason="${gameOver.reason ?? ''}">
-                  <h2>Game over</h2>
+                  <h2>${escapeHtml(gameOver.title)}</h2>
                   <p class="game-over-reason" data-testid="game-over-reason">${formatGameOverReason(gameOver.reason)}</p>
                   <dl class="final-stats">
                     <div><dt>Score</dt><dd data-testid="final-score">${gameOver.score}</dd></div>
                     <div><dt>Lines</dt><dd data-testid="final-lines">${gameOver.lines}</dd></div>
                     <div><dt>Level</dt><dd data-testid="final-level">${gameOver.level}</dd></div>
                     <div><dt>Time</dt><dd data-testid="final-time">${elapsed}</dd></div>
+                    ${
+                      gameOver.reason === 'sprint-complete'
+                        ? `<div><dt>Finish time</dt><dd data-testid="completion-time">${elapsed}</dd></div>`
+                        : ''
+                    }
                   </dl>
                   <div class="actions">
                     <button type="button" data-action="restart" data-testid="game-over-restart">Restart</button>
@@ -263,7 +302,19 @@ export class GameplayScreen {
 function formatGameOverReason(reason: GameOverModel['reason']): string {
   if (reason === 'block-out') return 'Block out';
   if (reason === 'top-out') return 'Top out';
+  if (reason === 'sprint-complete') return '40 lines';
+  if (reason === 'time-up') return "Time's up";
   return 'No valid spawn';
+}
+
+function gameOverTitle(reason: GameOverModel['reason']): string {
+  if (reason === 'sprint-complete') return 'Sprint complete';
+  if (reason === 'time-up') return "Time's up";
+  return 'Game over';
+}
+
+export function formatTimerStat(kind: TimerKind, ms: number): string {
+  return kind === 'countdown' ? `Left ${formatElapsed(ms)}` : `Time ${formatElapsed(ms)}`;
 }
 
 function idlePauseOverlay(): PauseOverlayModel {

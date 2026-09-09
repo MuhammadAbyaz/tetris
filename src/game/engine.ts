@@ -433,9 +433,13 @@ export function createSevenBag(rng: () => number = Math.random) {
   };
 }
 
-export type GameOverReason = 'block-out' | 'top-out';
+export type GameOverReason = 'block-out' | 'top-out' | 'sprint-complete' | 'time-up';
+export type PlayMode = 'marathon' | 'sprint' | 'ultra' | 'zen' | 'versus';
+export type TimerKind = 'elapsed' | 'countdown';
 
 export const LINES_PER_LEVEL = 10;
+export const SPRINT_LINE_TARGET = 40;
+export const ULTRA_TIME_LIMIT_MS = 180_000;
 export const DEFAULT_BASE_GRAVITY_MS = 800;
 export const DEFAULT_MIN_GRAVITY_MS = 20;
 export const GRAVITY_CURVE_BASE = 0.8;
@@ -469,6 +473,16 @@ export interface GameOptions {
   nextQueueSize?: number;
   pieceSequence?: PieceType[];
   rng?: () => number;
+  mode?: PlayMode;
+  lineTarget?: number | null;
+  timeLimitMs?: number | null;
+  noFail?: boolean;
+}
+
+export interface TimerDisplay {
+  visible: boolean;
+  kind: TimerKind;
+  ms: number;
 }
 
 type MovePhase = 'idle' | 'das' | 'arr';
@@ -503,6 +517,10 @@ export class Game {
   arrMs: number;
   nextQueueSize: number;
   lastLock: LockResult | null = null;
+  readonly mode: PlayMode;
+  readonly lineTarget: number | null;
+  readonly timeLimitMs: number | null;
+  readonly noFail: boolean;
 
   private nextQueue: PieceType[] = [];
   private sequence: PieceType[];
@@ -536,6 +554,20 @@ export class Game {
     this.dasMs = options.dasMs ?? 167;
     this.arrMs = options.arrMs ?? 33;
     this.nextQueueSize = Math.min(5, Math.max(3, options.nextQueueSize ?? 5));
+    this.mode = options.mode ?? 'marathon';
+    this.lineTarget =
+      options.lineTarget !== undefined
+        ? options.lineTarget
+        : this.mode === 'sprint'
+          ? SPRINT_LINE_TARGET
+          : null;
+    this.timeLimitMs =
+      options.timeLimitMs !== undefined
+        ? options.timeLimitMs
+        : this.mode === 'ultra'
+          ? ULTRA_TIME_LIMIT_MS
+          : null;
+    this.noFail = options.noFail ?? this.mode === 'zen';
     this.sequence = [...(options.pieceSequence ?? [])];
     this.rng = options.rng ?? Math.random;
     this.bag = createSevenBag(this.rng);
@@ -573,6 +605,21 @@ export class Game {
     return this.gameOverReason;
   }
 
+  get remainingTimeMs(): number {
+    if (this.timeLimitMs === null) return 0;
+    return Math.max(0, this.timeLimitMs - this.elapsedMs);
+  }
+
+  getTimerDisplay(): TimerDisplay {
+    if (this.mode === 'ultra' || this.timeLimitMs !== null) {
+      return { visible: true, kind: 'countdown', ms: this.remainingTimeMs };
+    }
+    if (this.mode === 'sprint' || this.lineTarget !== null) {
+      return { visible: true, kind: 'elapsed', ms: this.elapsedMs };
+    }
+    return { visible: false, kind: 'elapsed', ms: this.elapsedMs };
+  }
+
   isPaused(): boolean {
     return this.paused;
   }
@@ -603,7 +650,7 @@ export class Game {
   }
 
   injectGarbage(count: number, holeColumn?: number): void {
-    if (count <= 0 || this.gameOver) return;
+    if (count <= 0 || (this.gameOver && !this.noFail)) return;
     const hole =
       holeColumn !== undefined
         ? ((holeColumn % VISIBLE_COLS) + VISIBLE_COLS) % VISIBLE_COLS
@@ -765,6 +812,11 @@ export class Game {
   update(dtMs: number): void {
     if (this.gameOver || this.paused) return;
     this.elapsedMs += dtMs;
+    if (this.timeLimitMs !== null && this.elapsedMs >= this.timeLimitMs) {
+      this.elapsedMs = this.timeLimitMs;
+      this.endGame('time-up');
+      return;
+    }
     this.advanceRepeat(dtMs);
 
     if (this.softDropHeld) {
@@ -912,6 +964,14 @@ export class Game {
     this.gravityElapsed = 0;
     this.lastAction = 'spawn';
     this.lastKick = null;
+    if (this.lineTarget !== null && this.lines >= this.lineTarget) {
+      this.endGame('sprint-complete');
+      this.active = null;
+      for (const listener of this.lockListeners) {
+        listener(this.lastLock);
+      }
+      return;
+    }
     this.spawn(this.takePiece(), { lastLockInBuffer });
     for (const listener of this.lockListeners) {
       listener(this.lastLock);
@@ -938,6 +998,13 @@ export class Game {
 
   private spawn(type: PieceType, context: { lastLockInBuffer?: boolean } = {}): void {
     const piece: ActivePiece = { type, x: 3, y: VISIBLE_ROWS, rotation: 0 };
+    if (!this.canPlace(piece) && this.noFail) {
+      for (const cell of this.cellsOf(piece)) {
+        if (this.inBounds(cell.x, cell.y)) {
+          this.board[cell.y]![cell.x] = null;
+        }
+      }
+    }
     if (!this.canPlace(piece)) {
       this.active = piece;
       this.endGame(context.lastLockInBuffer ? 'top-out' : 'block-out');
@@ -954,6 +1021,9 @@ export class Game {
   }
 
   private endGame(reason: GameOverReason): void {
+    if (this.noFail && (reason === 'block-out' || reason === 'top-out')) {
+      return;
+    }
     this.gameOver = true;
     this.gameOverReason = reason;
   }
