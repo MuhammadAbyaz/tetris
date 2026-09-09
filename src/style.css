@@ -151,7 +151,7 @@ body {
   display: grid;
   grid-template-columns: repeat(var(--cols), var(--cell-size));
   gap: 1px;
-  background: #07090d;
+  background: var(--board-bg, #07090d);
   padding: 4px;
   border-radius: 6px;
   width: max-content;
@@ -177,6 +177,11 @@ body {
   animation: line-clear-flash 0.18s ease-in-out infinite alternate;
 }
 
+.cell-clearing-enhanced {
+  animation: line-clear-burst 0.22s ease-in-out infinite alternate;
+  filter: brightness(2.2) saturate(1.4);
+}
+
 @keyframes line-clear-flash {
   from {
     background: #f8fbff;
@@ -186,6 +191,90 @@ body {
     background: var(--cell);
     filter: brightness(1);
   }
+}
+
+@keyframes line-clear-burst {
+  from {
+    background: #fff7ed;
+    box-shadow:
+      0 0 12px #fdba74,
+      inset 0 0 0 1px #fff;
+    transform: scale(1.06);
+  }
+  to {
+    background: var(--cell);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+    transform: scale(1);
+  }
+}
+
+.playfield-stack .fx-line-clear,
+.playfield-stack .fx-level-up {
+  pointer-events: none;
+  position: absolute;
+  z-index: 3;
+}
+
+.fx-line-clear {
+  inset: 4px;
+  border-radius: 6px;
+  box-shadow: inset 0 0 40px rgba(253, 186, 116, 0.55);
+  animation: fx-clear-veil 0.52s ease-out;
+}
+
+.fx-level-up {
+  left: 50%;
+  top: 18%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: #fde68a;
+  color: #111827;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  animation: fx-level-flourish 0.9s ease-out;
+}
+
+@keyframes fx-clear-veil {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes fx-level-flourish {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.6);
+  }
+  35% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1.12);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) scale(1);
+  }
+}
+
+html[data-contrast='high'] {
+  --bg: #000000;
+  --panel: #111111;
+  --line: #ffffff;
+  --text: #ffffff;
+  --muted: #f5f5f5;
+  --board-bg: #000000;
+}
+
+html[data-theme='neon'] body {
+  background: radial-gradient(circle at top, #3b0764 0%, transparent 45%), var(--bg);
+}
+
+html[data-theme='forest'] body {
+  background: radial-gradient(circle at top, #14532d 0%, transparent 45%), var(--bg);
 }
 
 .cell-ghost {
@@ -406,6 +495,20 @@ body {
 .account-form .actions {
   display: flex;
   gap: 8px;
+}
+
+.leaderboard-groups {
+  display: grid;
+  gap: 24px;
+  margin-top: 16px;
+}
+
+.leaderboard-group h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .touch-controls {

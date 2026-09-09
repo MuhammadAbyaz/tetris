@@ -2,16 +2,15 @@ import './style.css';
 import {
   GARBAGE_COLOR,
   getRotationCells,
-  PIECE_COLORS,
   VISIBLE_COLS,
   VISIBLE_ROWS,
   type Cell,
   type Game,
-  type LockedCell,
   type PieceType,
 } from './game/engine';
 import { createModeGame, MODE_TITLES, type PlayMode } from './game/modes';
 import { formatTimerStat, renderGameplayShell } from './ui/gameplay';
+import { renderPrimaryNav } from './ui/chrome';
 import {
   ACHIEVEMENTS,
   createAchievementTracker,
@@ -30,17 +29,31 @@ import {
 import {
   attachGameAudio,
   actionForKey,
+  actionForTouchControl,
+  applyAppearance,
   applyTouch,
   browserStore,
   computeGameLayout,
   createAudioController,
+  createEffectsController,
   createPlayerSession,
+  createReplayRecorder,
   dispatchAction,
   handleKeyUp,
+  hasLastReplay,
   layoutCssVars,
+  loadLastReplay,
+  playReplay,
   releaseTouch,
+  renderLocalLeaderboard,
   renderSettingsMenu,
+  resolveAppearance,
+  saveLastReplay,
+  submitLocalRecord,
+  type EffectsController,
   type GameAction,
+  type ReplayPlayback,
+  type ReplayRecorder,
   type TouchControl,
 } from './player';
 
@@ -52,6 +65,11 @@ const audio = createAudioController();
 const player = createPlayerSession({ store, audio });
 let capturingBinding: GameAction | null = null;
 const wiredGames = new WeakSet<Game>();
+const replayGames = new WeakSet<Game>();
+const recorders = new WeakMap<Game, ReplayRecorder>();
+const effectControllers = new WeakMap<Game, EffectsController>();
+let activeReplay: ReplayPlayback | null = null;
+let leaderboardFilter = 'all';
 
 function handlingOptions() {
   return { dasMs: player.settings.dasMs, arrMs: player.settings.arrMs };
@@ -174,28 +192,16 @@ function seedDemoData(): void {
 }
 
 function render(): void {
+  const appearance = applyDocumentAppearance();
+  syncGameplayMusic();
   app.innerHTML = `
     <div class="app-shell">
       <header class="topbar">
         <strong>Tetris</strong>
-        <nav class="nav">
-          ${navButton('menu', 'Hub')}
-          ${navButton('marathon', 'Marathon')}
-          ${navButton('sprint', 'Sprint')}
-          ${navButton('ultra', 'Ultra')}
-          ${navButton('zen', 'Zen')}
-          ${navButton('versus', 'Versus')}
-          ${navButton('daily', 'Daily')}
-          ${navButton('online', 'Online')}
-          ${navButton('spectate', 'Spectate')}
-          ${navButton('leaderboard', 'Ranks')}
-          ${navButton('account', 'Account')}
-          ${navButton('achievements', 'Trophies')}
-          ${navButton('settings', 'Settings')}
-        </nav>
+        ${renderPrimaryNav(currentView)}
       </header>
       ${toast ? `<div class="toast" data-testid="achievement-toast">${escapeHtml(toast)}</div>` : ''}
-      <main class="view" data-testid="view-${currentView}">${renderView()}</main>
+      <main class="view" data-testid="view-${currentView}">${renderView(appearance)}</main>
     </div>
   `;
 
@@ -204,11 +210,7 @@ function render(): void {
   applyResponsiveLayout();
 }
 
-function navButton(view: View, label: string): string {
-  return `<button type="button" data-nav="${view}" class="${currentView === view ? 'is-active' : ''}">${label}</button>`;
-}
-
-function renderView(): string {
+function renderView(appearance = resolveAppearance(player.settings)): string {
   switch (currentView) {
     case 'menu':
       return `
@@ -224,22 +226,30 @@ function renderView(): string {
             ${hubCard('online', 'Online Versus', 'Queue for an online match that uses local garbage-line rules.')}
             ${hubCard('daily', 'Daily challenge', 'Every player gets the same seeded piece sequence for the date.')}
             ${hubCard('spectate', 'Spectate', 'Watch a live board without controlling pieces.')}
-            ${hubCard('leaderboard', 'Global ranks', 'Submitted scores persist on the backend leaderboard.')}
+            ${hubCard('leaderboard', 'Ranks', 'Local per-mode records plus global backend ranks.')}
             ${hubCard('account', 'Cloud save', 'Sign in on another device to restore settings and progress.')}
             ${hubCard('achievements', 'Achievements', 'Unlock and show feats such as your first Tetris.')}
-            ${hubCard('settings', 'Settings', 'Remap keys, volume, mute, and DAS/ARR handling.')}
+            ${hubCard('settings', 'Settings', 'Music, themes, accessibility, keys, and DAS/ARR.')}
+            ${
+              hasLastReplay(store)
+                ? `<button type="button" class="hub-card" data-action="replay-last" data-testid="hub-replay-last" aria-label="Replay last game">
+              <h2>Replay last game</h2>
+              <p>Play back the recorded input log from your previous session.</p>
+            </button>`
+                : ''
+            }
           </div>
         </section>`;
     case 'marathon':
     case 'sprint':
     case 'ultra':
     case 'zen':
-      return soloShell(MODE_TITLES[currentView], soloGames[currentView], currentView);
+      return soloShell(MODE_TITLES[currentView], soloGames[currentView], currentView, appearance);
     case 'daily':
       dailyGame ??= startDailyChallenge(dailyDateKey(new Date()));
       listenToGame(dailyGame);
       controlTarget = dailyGame;
-      return `${soloShell(`Daily ${dailyDateKey(new Date())}`, dailyGame, 'daily')}
+      return `${soloShell(`Daily ${dailyDateKey(new Date())}`, dailyGame, 'daily', appearance)}
         <p class="banner" data-testid="daily-seed">Seeded sequence for ${dailyDateKey(new Date())}</p>`;
     case 'versus':
       versus ??= createVersusSession('local', { holeColumn: 4 });
@@ -284,19 +294,28 @@ function renderView(): string {
 }
 
 function hubCard(view: View, title: string, copy: string): string {
-  return `<button type="button" class="hub-card" data-nav="${view}">
+  return `<button type="button" class="hub-card" data-nav="${view}" aria-label="${title}">
     <h2>${title}</h2>
     <p>${copy}</p>
   </button>`;
 }
 
-function soloShell(title: string, game: Game, testId: string): string {
+function soloShell(
+  title: string,
+  game: Game,
+  testId: string,
+  appearance = resolveAppearance(player.settings),
+): string {
   return renderGameplayShell({
     game,
     title,
     testId,
     highScore: player.highScore,
     muted: player.audio.muted,
+    effects: effectsFor(game),
+    replayAvailable: hasLastReplay(store),
+    appearanceTheme: appearance.themeId,
+    boardBackground: appearance.boardBackground,
   }).html;
 }
 
@@ -339,7 +358,8 @@ function renderLeaderboard(): string {
             .join('')}
         </tbody>
       </table>
-    </section>`;
+    </section>
+    ${renderLocalLeaderboard(store, leaderboardFilter)}`;
 }
 
 function renderAccount(): string {
@@ -398,6 +418,15 @@ function bindChrome(): void {
       if (currentView === 'versus' && versus) controlTarget = versus.player1;
       if (currentView === 'online' && online) controlTarget = online.player1;
       if (currentView === 'spectate') controlTarget = null;
+      if (
+        currentView !== 'marathon' &&
+        currentView !== 'sprint' &&
+        currentView !== 'ultra' &&
+        currentView !== 'zen' &&
+        currentView !== 'daily'
+      ) {
+        activeReplay = null;
+      }
       render();
     });
   });
@@ -417,7 +446,11 @@ function bindView(): void {
     app.querySelector('[data-action="menu"]')?.addEventListener('click', () => {
       currentView = 'menu';
       controlTarget = null;
+      activeReplay = null;
       render();
+    });
+    app.querySelector('[data-action="replay-last"]')?.addEventListener('click', () => {
+      startLastReplay();
     });
     app.querySelector('[data-action="toggle-mute"]')?.addEventListener('click', () => {
       applyPlayerDraft({ muted: !player.audio.muted });
@@ -439,6 +472,19 @@ function bindView(): void {
   }
   if (currentView === 'spectate' && spectatorMatch) {
     mountDual(spectatorMatch);
+  }
+  if (currentView === 'menu') {
+    app.querySelector('[data-action="replay-last"]')?.addEventListener('click', () => {
+      startLastReplay();
+    });
+  }
+  if (currentView === 'leaderboard') {
+    app
+      .querySelector<HTMLSelectElement>('[data-testid="leaderboard-mode-filter"]')
+      ?.addEventListener('change', (event) => {
+        leaderboardFilter = (event.target as HTMLSelectElement).value;
+        render();
+      });
   }
   if (currentView === 'account') {
     app.querySelector('[data-action="register"]')?.addEventListener('click', () => {
@@ -490,6 +536,7 @@ function applyCloudSave(save: CloudSave): void {
 }
 
 function restartSolo(): void {
+  activeReplay = null;
   if (currentView === 'daily') {
     dailyGame = startDailyChallenge(dailyDateKey(new Date()));
     controlTarget = dailyGame;
@@ -571,6 +618,8 @@ function paintPlayfield(game: Game, playfieldCells: HTMLDivElement[]): void {
   const active = indexCells(game.getActiveCells());
   const ghost = indexCells(game.getGhostPreview().cells);
   const clearing = new Set(game.getClearingRows());
+  const colors = resolveAppearance(player.settings).pieceColors;
+  const enhanced = Boolean(effectControllers.get(game)?.lineClear?.playing);
 
   for (let row = 0; row < VISIBLE_ROWS; row += 1) {
     const y = VISIBLE_ROWS - 1 - row;
@@ -584,28 +633,24 @@ function paintPlayfield(game: Game, playfieldCells: HTMLDivElement[]): void {
       let color = '';
       if (isClearing) {
         kind = 'clearing';
-        color = cellColor(locked);
+        color = locked === 'G' ? GARBAGE_COLOR : colors[locked];
       } else if (locked) {
         kind = 'locked';
-        color = cellColor(locked);
+        color = locked === 'G' ? GARBAGE_COLOR : colors[locked];
       } else if (falling && game.active) {
         kind = 'active';
-        color = PIECE_COLORS[game.active.type];
+        color = colors[game.active.type];
       } else if (isGhost && game.active) {
         kind = 'ghost';
-        color = PIECE_COLORS[game.active.type];
+        color = colors[game.active.type];
       }
-      el.className = `cell cell-${kind}`;
+      el.className = `cell cell-${kind}${isClearing && enhanced ? ' cell-clearing-enhanced' : ''}`;
       el.dataset.filled = String(kind !== 'empty');
       el.dataset.kind = kind;
       if (color) el.style.setProperty('--cell', color);
       else el.style.removeProperty('--cell');
     }
   }
-}
-
-function cellColor(locked: LockedCell): string {
-  return locked === 'G' ? GARBAGE_COLOR : PIECE_COLORS[locked];
 }
 
 function paintHud(game: Game): void {
@@ -626,19 +671,30 @@ function paintHud(game: Game): void {
     const display = game.getTimerDisplay();
     timer.textContent = formatTimerStat(display.kind, display.ms);
   }
+  const stack = app.querySelector('.playfield-stack');
+  if (stack) {
+    stack
+      .querySelectorAll('[data-testid="line-clear-effect"], [data-testid="level-up-effect"]')
+      .forEach((el) => el.remove());
+    const overlays = effectControllers.get(game)?.renderOverlays() ?? '';
+    if (overlays) stack.insertAdjacentHTML('beforeend', overlays);
+  }
 }
 
 function paintSidebars(game: Game, holdBox: HTMLDivElement, nextQueue: HTMLDivElement): void {
+  const colors = resolveAppearance(player.settings).pieceColors;
   const hold = game.getHoldPreview();
   holdBox.dataset.empty = String(hold.piece === null);
-  holdBox.replaceChildren(miniGrid(hold.cells, hold.color, hold.piece === null));
+  holdBox.replaceChildren(
+    miniGrid(hold.cells, hold.piece ? colors[hold.piece] : hold.color, hold.piece === null),
+  );
   nextQueue.replaceChildren(
     ...game.getNextQueue().map((type: PieceType) => {
       const slot = document.createElement('div');
       slot.className = 'preview-slot';
       slot.dataset.piece = type;
       slot.dataset.testid = 'next-piece';
-      slot.appendChild(miniGrid(getRotationCells(type, 0), PIECE_COLORS[type], false));
+      slot.appendChild(miniGrid(getRotationCells(type, 0), colors[type], false));
       return slot;
     }),
   );
@@ -692,6 +748,7 @@ function onKeyDown(event: KeyboardEvent): void {
   }
 
   if (currentView === 'settings') return;
+  if (activeReplay) return;
 
   const p2 = versusSecondary();
   if (p2 && handleVersusP2(event, p2)) {
@@ -712,6 +769,7 @@ function onKeyDown(event: KeyboardEvent): void {
   }
   if (controlTarget.isPaused() || controlTarget.isOver()) return;
   dispatchAction(controlTarget, action);
+  recorders.get(controlTarget)?.record('action', action);
   maybeUnlock();
 }
 
@@ -760,7 +818,11 @@ function handleVersusP2(event: KeyboardEvent, game: Game): boolean {
 }
 
 function onKeyUp(event: KeyboardEvent): void {
-  if (controlTarget) handleKeyUp(player.settings.bindings, controlTarget, event.key);
+  if (controlTarget && !activeReplay) {
+    const action = actionForKey(player.settings.bindings, event.key);
+    if (action) recorders.get(controlTarget)?.record('release', action);
+    handleKeyUp(player.settings.bindings, controlTarget, event.key);
+  }
   const p2 = versusSecondary();
   if (!p2) return;
   if (event.key === 'j' || event.key === 'J') p2.releaseLeft();
@@ -794,13 +856,18 @@ function startLoop(): void {
   const tick = (now: number) => {
     const dt = now - last;
     last = now;
-    marathon.update(dt);
-    soloGames.sprint.update(dt);
-    soloGames.ultra.update(dt);
-    soloGames.zen.update(dt);
-    dailyGame?.update(dt);
+    const replayGame = activeReplay?.game ?? null;
+    if (activeReplay) activeReplay.advance(dt);
+    if (marathon !== replayGame) marathon.update(dt);
+    if (soloGames.sprint !== replayGame) soloGames.sprint.update(dt);
+    if (soloGames.ultra !== replayGame) soloGames.ultra.update(dt);
+    if (soloGames.zen !== replayGame) soloGames.zen.update(dt);
+    if (dailyGame && dailyGame !== replayGame) dailyGame.update(dt);
     versus?.update(dt);
     online?.update(dt);
+    for (const game of [marathon, soloGames.sprint, soloGames.ultra, soloGames.zen, dailyGame]) {
+      if (game) effectControllers.get(game)?.tick(dt);
+    }
     paintView?.();
     requestAnimationFrame(tick);
   };
@@ -811,10 +878,24 @@ function listenToGame(game: Game): void {
   if (wiredGames.has(game)) return;
   wiredGames.add(game);
   attachGameAudio(game, audio);
+  const effects = createEffectsController();
+  effects.attach(game);
+  effectControllers.set(game, effects);
+  recorders.set(game, createReplayRecorder(game));
   game.onCue((cue) => {
     if (cue === 'gameOver') {
       player.persistScore(game.score);
       persistCurrentProgress();
+      if (replayGames.has(game)) return;
+      const recorder = recorders.get(game);
+      if (recorder) saveLastReplay(store, recorder.finalize());
+      submitLocalRecord(store, {
+        mode: game.mode,
+        score: game.score,
+        lines: game.lines,
+        level: game.level,
+        elapsedMs: game.elapsedMs,
+      });
     }
   });
 }
@@ -841,8 +922,10 @@ function bindTouchControls(): void {
     const control = button.dataset.touch as TouchControl;
     button.addEventListener('pointerdown', (event) => {
       event.preventDefault();
-      if (!controlTarget || controlTarget.isPaused() || controlTarget.isOver()) return;
+      if (!controlTarget || controlTarget.isPaused() || controlTarget.isOver() || activeReplay)
+        return;
       applyTouch(controlTarget, control);
+      recorders.get(controlTarget)?.record('action', actionForTouchControl(control));
       maybeUnlock();
     });
     button.addEventListener('pointerup', () => {
@@ -859,6 +942,13 @@ function bindSettingsMenu(): void {
   const mute = app.querySelector<HTMLInputElement>('[data-testid="settings-mute"]');
   const das = app.querySelector<HTMLInputElement>('[data-testid="settings-das"]');
   const arr = app.querySelector<HTMLInputElement>('[data-testid="settings-arr"]');
+  const musicEnabled = app.querySelector<HTMLInputElement>(
+    '[data-testid="settings-music-enabled"]',
+  );
+  const musicTrack = app.querySelector<HTMLSelectElement>('[data-testid="settings-music-track"]');
+  const theme = app.querySelector<HTMLSelectElement>('[data-testid="settings-theme"]');
+  const colorblind = app.querySelector<HTMLInputElement>('[data-testid="settings-colorblind"]');
+  const contrast = app.querySelector<HTMLSelectElement>('[data-testid="settings-contrast"]');
   volume?.addEventListener('input', () => {
     player.changeDraft({ volume: Number(volume.value) / 100 });
   });
@@ -870,6 +960,27 @@ function bindSettingsMenu(): void {
   });
   arr?.addEventListener('change', () => {
     player.changeDraft({ arrMs: Number(arr.value) });
+  });
+  musicEnabled?.addEventListener('change', () => {
+    player.changeDraft({ musicEnabled: musicEnabled.checked });
+  });
+  musicTrack?.addEventListener('change', () => {
+    const track = musicTrack.value as typeof player.draft.musicTrack;
+    player.changeDraft({ musicTrack: track });
+    if (player.audio.musicPlaying) player.audio.selectTrack(track);
+    else player.audio.setTrack(track);
+  });
+  theme?.addEventListener('change', () => {
+    player.changeDraft({ theme: theme.value as typeof player.draft.theme });
+    applyAppearance(player.draft, document.documentElement);
+  });
+  colorblind?.addEventListener('change', () => {
+    player.changeDraft({ colorblindPalette: colorblind.checked });
+    applyAppearance(player.draft, document.documentElement);
+  });
+  contrast?.addEventListener('change', () => {
+    player.changeDraft({ contrast: contrast.value as typeof player.draft.contrast });
+    applyAppearance(player.draft, document.documentElement);
   });
   app.querySelectorAll<HTMLButtonElement>('[data-binding]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -884,6 +995,47 @@ function bindSettingsMenu(): void {
     capturingBinding = null;
     render();
   });
+}
+
+function applyDocumentAppearance() {
+  const source = player.menuOpen ? player.draft : player.settings;
+  return applyAppearance(source, document.documentElement);
+}
+
+function isPlayView(view: View): boolean {
+  return isSoloMode(view) || view === 'daily' || view === 'versus' || view === 'online';
+}
+
+function syncGameplayMusic(): void {
+  if (player.settings.musicEnabled && !player.audio.muted && isPlayView(currentView)) {
+    if (!player.audio.musicPlaying) player.audio.startGameplayMusic();
+  } else if (player.audio.musicPlaying && !isPlayView(currentView)) {
+    player.audio.stopGameplayMusic();
+  }
+}
+
+function effectsFor(game: Game): EffectsController {
+  return effectControllers.get(game) ?? createEffectsController();
+}
+
+function startLastReplay(): void {
+  const log = loadLastReplay(store);
+  if (!log) return;
+  const playback = playReplay(log);
+  activeReplay = playback;
+  replayGames.add(playback.game);
+  const mode: SoloMode =
+    log.mode === 'sprint' || log.mode === 'ultra' || log.mode === 'zen' ? log.mode : 'marathon';
+  currentView = mode;
+  soloGames[mode] = playback.game;
+  if (mode === 'marathon') {
+    marathon = playback.game;
+    achievements.attach(marathon);
+  }
+  listenToGame(playback.game);
+  controlTarget = null;
+  window.tetrisGame = playback.game;
+  render();
 }
 
 function applyResponsiveLayout(): void {

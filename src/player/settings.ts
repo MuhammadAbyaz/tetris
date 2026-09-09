@@ -1,5 +1,5 @@
 import { createGame, type Game } from '../game/engine';
-import { createAudioController, type AudioController } from './audio';
+import { createAudioController, MUSIC_TRACKS, type AudioController } from './audio';
 import { cloneBindings, GAME_ACTIONS, remapBinding, type GameAction } from './controls';
 import {
   loadPlayerState,
@@ -9,6 +9,7 @@ import {
   type PlayerPersistState,
   type PlayerSettings,
 } from './persistence';
+import { CONTRAST_LEVELS, THEMES } from './themes';
 
 export interface SettingsDraft extends PlayerSettings {
   awaitingAction: GameAction | null;
@@ -33,14 +34,14 @@ export interface PlayerSession {
 export function renderSettingsMenu(settings: PlayerSettings): string {
   const bindingRows = GAME_ACTIONS.map((action) => {
     const keys = settings.bindings[action].join(', ');
-    return `<button type="button" class="binding-row" data-binding="${action}" data-testid="binding-${action}">
+    return `<button type="button" class="binding-row" data-binding="${action}" data-testid="binding-${action}" aria-label="${labelForAction(action)} key binding">
       <span>${labelForAction(action)}</span>
       <kbd data-testid="binding-value-${action}">${escapeHtml(keys)}</kbd>
     </button>`;
   }).join('');
 
   return `
-    <section class="settings-menu" data-testid="settings-menu">
+    <section class="settings-menu" data-testid="settings-menu" aria-label="Settings menu">
       <h1>Settings</h1>
       <div class="settings-block" data-testid="settings-bindings">
         <h2>Key bindings</h2>
@@ -48,23 +49,63 @@ export function renderSettingsMenu(settings: PlayerSettings): string {
       </div>
       <form class="settings" data-testid="settings-audio">
         <label>Volume
-          <input id="volume-input" data-testid="settings-volume" type="range" min="0" max="100" value="${Math.round(settings.volume * 100)}" />
+          <input id="volume-input" data-testid="settings-volume" type="range" min="0" max="100" value="${Math.round(settings.volume * 100)}" aria-label="Volume" />
         </label>
         <label class="mute-toggle">
-          <input id="mute-input" data-testid="settings-mute" type="checkbox" ${settings.muted ? 'checked' : ''} />
+          <input id="mute-input" data-testid="settings-mute" type="checkbox" ${settings.muted ? 'checked' : ''} aria-label="Mute sound effects" />
           Mute
+        </label>
+      </form>
+      <form class="settings" data-testid="settings-music">
+        <label class="mute-toggle">
+          <input id="music-enabled-input" data-testid="settings-music-enabled" type="checkbox" ${settings.musicEnabled ? 'checked' : ''} aria-label="Enable background music" />
+          Background music
+        </label>
+        <label>Music track
+          <select id="music-track-input" data-testid="settings-music-track" aria-label="Music track">
+            ${MUSIC_TRACKS.map(
+              (track) =>
+                `<option value="${track.id}" ${settings.musicTrack === track.id ? 'selected' : ''} aria-label="${track.name} music track">${track.name}</option>`,
+            ).join('')}
+          </select>
+        </label>
+      </form>
+      <form class="settings" data-testid="settings-theme">
+        <label>Theme
+          <select id="theme-input" data-testid="settings-theme" aria-label="Theme">
+            ${Object.values(THEMES)
+              .map(
+                (theme) =>
+                  `<option value="${theme.id}" ${settings.theme === theme.id ? 'selected' : ''} aria-label="${theme.name} theme">${theme.name}</option>`,
+              )
+              .join('')}
+          </select>
+        </label>
+      </form>
+      <form class="settings" data-testid="settings-accessibility">
+        <label class="mute-toggle">
+          <input id="colorblind-input" data-testid="settings-colorblind" type="checkbox" ${settings.colorblindPalette ? 'checked' : ''} aria-label="Colorblind-friendly palette" />
+          Colorblind-friendly palette
+        </label>
+        <label>Contrast
+          <select id="contrast-input" data-testid="settings-contrast" aria-label="Contrast">
+            ${CONTRAST_LEVELS.map(
+              (level) =>
+                `<option value="${level}" ${settings.contrast === level ? 'selected' : ''} aria-label="${level} contrast">${level === 'high' ? 'High' : 'Normal'}</option>`,
+            ).join('')}
+          </select>
         </label>
       </form>
       <form class="settings" data-testid="settings-handling">
         <label>DAS (ms)
-          <input id="settings-das" data-testid="settings-das" type="number" min="0" step="10" value="${settings.dasMs}" />
+          <input id="settings-das" data-testid="settings-das" type="number" min="0" step="10" value="${settings.dasMs}" aria-label="DAS delay in milliseconds" />
         </label>
         <label>ARR (ms)
-          <input id="settings-arr" data-testid="settings-arr" type="number" min="0" step="1" value="${settings.arrMs}" />
+          <input id="settings-arr" data-testid="settings-arr" type="number" min="0" step="1" value="${settings.arrMs}" aria-label="ARR repeat in milliseconds" />
         </label>
       </form>
       <div class="actions">
-        <button type="button" data-action="close-settings" data-testid="settings-close">Close</button>
+        <button type="button" data-action="close-settings" data-testid="settings-close" aria-label="Close settings">Close</button>
       </div>
     </section>`;
 }
@@ -85,9 +126,17 @@ export function createPlayerSession(options: {
     });
   game.setDasArr({ dasMs: settings.dasMs, arrMs: settings.arrMs });
   const audio =
-    options.audio ?? createAudioController({ muted: settings.muted, volume: settings.volume });
+    options.audio ??
+    createAudioController({
+      muted: settings.muted,
+      volume: settings.volume,
+      musicEnabled: settings.musicEnabled,
+      track: settings.musicTrack,
+    });
   audio.setMuted(settings.muted);
   audio.setVolume(settings.volume);
+  audio.setMusicEnabled(settings.musicEnabled);
+  audio.setTrack(settings.musicTrack);
 
   const session: PlayerSession = {
     game,
@@ -125,11 +174,19 @@ export function createPlayerSession(options: {
         dasMs: session.draft.dasMs,
         arrMs: session.draft.arrMs,
         bindings: cloneBindings(session.draft.bindings),
+        musicEnabled: session.draft.musicEnabled,
+        musicTrack: session.draft.musicTrack,
+        theme: session.draft.theme,
+        colorblindPalette: session.draft.colorblindPalette,
+        contrast: session.draft.contrast,
       };
       session.settings = next;
       session.game.setDasArr({ dasMs: next.dasMs, arrMs: next.arrMs });
       session.audio.setVolume(next.volume);
       session.audio.setMuted(next.muted);
+      session.audio.setMusicEnabled(next.musicEnabled);
+      if (session.audio.musicPlaying) session.audio.selectTrack(next.musicTrack);
+      else session.audio.setTrack(next.musicTrack);
       persist(session);
       return next;
     },
