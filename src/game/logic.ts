@@ -18,6 +18,8 @@ export {
   HARD_DROP_POINTS,
   COMBO_POINTS_PER_LEVEL,
   BACK_TO_BACK_MULTIPLIER,
+  SPRINT_LINE_TARGET,
+  ULTRA_TIME_LIMIT_MS,
   VISIBLE_COLS,
   VISIBLE_ROWS,
   classifyClear,
@@ -34,7 +36,11 @@ export type {
   LockResult,
   LockedCell,
   PieceType,
+  PlayMode,
+  TimerDisplay,
+  TimerKind,
 } from './engine';
+export { createModeGame, MODE_TITLES, modeDefaults } from './modes';
 
 export interface GameConfig {
   readonly boardWidth: number;

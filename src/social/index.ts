@@ -14,6 +14,8 @@ export { ACHIEVEMENTS, AchievementTracker, createAchievementTracker } from './ac
 export {
   countGarbageRows,
   createVersusSession,
+  garbageLinesForAttack,
   garbageLinesForClears,
+  garbageLinesForCombo,
   VersusSession,
 } from './versus';

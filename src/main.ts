@@ -1,6 +1,5 @@
 import './style.css';
 import {
-  createGame,
   GARBAGE_COLOR,
   getRotationCells,
   PIECE_COLORS,
@@ -11,7 +10,8 @@ import {
   type LockedCell,
   type PieceType,
 } from './game/engine';
-import { renderGameplayShell } from './ui/gameplay';
+import { createModeGame, MODE_TITLES, type PlayMode } from './game/modes';
+import { formatTimerStat, renderGameplayShell } from './ui/gameplay';
 import {
   ACHIEVEMENTS,
   createAchievementTracker,
@@ -32,12 +32,10 @@ const backend = createBackend();
 const account = createAccountClient(backend);
 const achievements = createAchievementTracker();
 
-let marathon = createMarathon();
-achievements.attach(marathon);
-
+type SoloMode = Extract<PlayMode, 'marathon' | 'sprint' | 'ultra' | 'zen'>;
 type View =
   | 'menu'
-  | 'marathon'
+  | SoloMode
   | 'daily'
   | 'versus'
   | 'online'
@@ -54,6 +52,15 @@ if (!appRoot) {
   throw new Error('Missing #app root');
 }
 const app = appRoot;
+
+const soloGames: Record<SoloMode, Game> = {
+  marathon: createModeGame('marathon'),
+  sprint: createModeGame('sprint'),
+  ultra: createModeGame('ultra'),
+  zen: createModeGame('zen'),
+};
+let marathon = soloGames.marathon;
+achievements.attach(marathon);
 
 let currentView: View = resolveInitialView(scene);
 let dailyGame: Game | null = null;
@@ -96,20 +103,17 @@ seedDemoData();
 render();
 startLoop();
 
-function createMarathon(): Game {
-  return createGame({
-    nextQueueSize: 5,
-    dasMs: 167,
-    arrMs: 33,
-    gravityMs: 800,
-    softDropMs: 40,
-  });
+function isSoloMode(view: View): view is SoloMode {
+  return view === 'marathon' || view === 'sprint' || view === 'ultra' || view === 'zen';
 }
 
 function resolveInitialView(value: string | null): View {
   const views: View[] = [
     'menu',
     'marathon',
+    'sprint',
+    'ultra',
+    'zen',
     'daily',
     'versus',
     'online',
@@ -145,8 +149,11 @@ function render(): void {
         <nav class="nav">
           ${navButton('menu', 'Hub')}
           ${navButton('marathon', 'Marathon')}
-          ${navButton('daily', 'Daily')}
+          ${navButton('sprint', 'Sprint')}
+          ${navButton('ultra', 'Ultra')}
+          ${navButton('zen', 'Zen')}
           ${navButton('versus', 'Versus')}
+          ${navButton('daily', 'Daily')}
           ${navButton('online', 'Online')}
           ${navButton('spectate', 'Spectate')}
           ${navButton('leaderboard', 'Ranks')}
@@ -172,9 +179,14 @@ function renderView(): string {
     case 'menu':
       return `
         <section class="hub" data-testid="social-hub">
-          <h1>Online & social</h1>
-          <p class="lede">Matchmaking, cloud save, daily seeds, spectating, ranks, and achievements.</p>
+          <h1>Play Tetris</h1>
+          <p class="lede">Marathon, Sprint, Ultra, Zen practice, and local Versus with garbage lines.</p>
           <div class="hub-grid">
+            ${hubCard('marathon', 'Marathon', 'Endless play. Speed rises with level until a standard game over.')}
+            ${hubCard('sprint', 'Sprint 40', 'Clear 40 lines as fast as you can. Elapsed time stays on screen.')}
+            ${hubCard('ultra', 'Ultra', 'Score as much as you can before the countdown hits zero.')}
+            ${hubCard('zen', 'Zen / Practice', 'No game over. Block-outs and top-outs keep the stack going.')}
+            ${hubCard('versus', 'Local Versus', 'Two or more boards. Attacks send garbage. Last player standing wins.')}
             ${hubCard('online', 'Online Versus', 'Queue for an online match that uses local garbage-line rules.')}
             ${hubCard('daily', 'Daily challenge', 'Every player gets the same seeded piece sequence for the date.')}
             ${hubCard('spectate', 'Spectate', 'Watch a live board without controlling pieces.')}
@@ -184,7 +196,10 @@ function renderView(): string {
           </div>
         </section>`;
     case 'marathon':
-      return soloShell('Marathon', marathon, 'marathon');
+    case 'sprint':
+    case 'ultra':
+    case 'zen':
+      return soloShell(MODE_TITLES[currentView], soloGames[currentView], currentView);
     case 'daily':
       dailyGame ??= startDailyChallenge(dailyDateKey(new Date()));
       controlTarget = dailyGame;
@@ -236,21 +251,26 @@ function soloShell(title: string, game: Game, testId: string): string {
   return renderGameplayShell({ game, title, testId }).html;
 }
 
-function dualShell(title: string, _match: VersusSession, spectating: boolean): string {
+function dualShell(title: string, match: VersusSession, spectating: boolean): string {
+  const boards = match.players
+    .map(
+      (_, index) => `
+        <div class="board-wrap${match.isEliminated(index) ? ' is-eliminated' : ''}${match.winnerIndex === index ? ' is-winner' : ''}">
+          <h2>Player ${index + 1}${match.isEliminated(index) ? ' · Eliminated' : ''}${match.winnerIndex === index ? ' · Winner' : ''}</h2>
+          <div class="playfield playfield-sm" data-board="${index}" style="--cols:${VISIBLE_COLS}"></div>
+        </div>`,
+    )
+    .join('');
+  const winner =
+    match.winnerIndex !== null
+      ? `<p class="banner" data-testid="versus-winner">Player ${match.winnerIndex + 1} wins</p>`
+      : '';
   return `
     <section class="versus-wrap" data-testid="${spectating ? 'spectator-view' : 'versus-view'}">
       <h1>${title}${spectating ? ' · view only' : ''}</h1>
-      <div class="versus-grid">
-        <div class="board-wrap">
-          <h2>Player 1</h2>
-          <div class="playfield playfield-sm" data-board="0" style="--cols:${VISIBLE_COLS}"></div>
-        </div>
-        <div class="board-wrap">
-          <h2>Player 2</h2>
-          <div class="playfield playfield-sm" data-board="1" style="--cols:${VISIBLE_COLS}"></div>
-        </div>
-      </div>
-      <p class="help">${spectating ? 'Spectators cannot move pieces.' : 'You control Player 1. Garbage uses the same line-send table as local Versus.'}</p>
+      ${winner}
+      <div class="versus-grid">${boards}</div>
+      <p class="help">${spectating ? 'Spectators cannot move pieces.' : 'P1: arrows · Space hard · Z/X rotate · C hold. P2: J/L move · K soft · I/U rotate · Enter hard · H hold. Attacks send garbage. Last player standing wins.'}</p>
     </section>`;
 }
 
@@ -314,19 +334,22 @@ function bindChrome(): void {
   app.querySelectorAll<HTMLButtonElement>('[data-nav]').forEach((button) => {
     button.addEventListener('click', () => {
       currentView = button.dataset.nav as View;
-      if (currentView === 'marathon') controlTarget = marathon;
+      if (isSoloMode(currentView)) controlTarget = soloGames[currentView];
       if (currentView === 'daily') {
         dailyGame ??= startDailyChallenge(dailyDateKey(new Date()));
         controlTarget = dailyGame;
       }
+      if (currentView === 'versus' && versus) controlTarget = versus.player1;
+      if (currentView === 'online' && online) controlTarget = online.player1;
+      if (currentView === 'spectate') controlTarget = null;
       render();
     });
   });
 }
 
 function bindView(): void {
-  if (currentView === 'marathon' || currentView === 'daily') {
-    const game = currentView === 'daily' ? dailyGame! : marathon;
+  if (isSoloMode(currentView) || currentView === 'daily') {
+    const game = currentView === 'daily' ? dailyGame! : soloGames[currentView];
     mountSolo(game);
     app.querySelector('[data-action="resume"]')?.addEventListener('click', () => {
       game.resume();
@@ -401,11 +424,14 @@ function restartSolo(): void {
   if (currentView === 'daily') {
     dailyGame = startDailyChallenge(dailyDateKey(new Date()));
     controlTarget = dailyGame;
-  } else {
-    marathon = createMarathon();
-    achievements.attach(marathon);
-    controlTarget = marathon;
-    window.tetrisGame = marathon;
+  } else if (isSoloMode(currentView)) {
+    soloGames[currentView] = createModeGame(currentView);
+    if (currentView === 'marathon') {
+      marathon = soloGames.marathon;
+      achievements.attach(marathon);
+    }
+    controlTarget = soloGames[currentView];
+    window.tetrisGame = controlTarget;
   }
   render();
 }
@@ -442,12 +468,15 @@ function mountSolo(game: Game): void {
 }
 
 function mountDual(match: VersusSession): void {
-  const boards = [0, 1].map((index) => {
-    const el = app.querySelector<HTMLDivElement>(`[data-board="${index}"]`)!;
-    return { game: match.player(index as 0 | 1), cells: fillPlayfield(el) };
+  const boards = [...app.querySelectorAll<HTMLDivElement>('[data-board]')].map((el) => {
+    const index = Number(el.dataset.board ?? '0');
+    return { game: match.player(index), cells: fillPlayfield(el) };
   });
   const paint = () => {
     for (const board of boards) paintPlayfield(board.game, board.cells);
+    if (match.isFinished && !app.querySelector('[data-testid="versus-winner"]')) {
+      render();
+    }
   };
   paintView = paint;
   paint();
@@ -508,11 +537,16 @@ function paintHud(game: Game): void {
   const lines = app.querySelector('[data-testid="hud-lines"]');
   const combo = app.querySelector('[data-testid="hud-combo"]');
   const backToBack = app.querySelector('[data-testid="hud-back-to-back"]');
+  const timer = app.querySelector('[data-testid="hud-timer"]');
   if (score) score.textContent = `Score ${game.score}`;
   if (level) level.textContent = `Level ${game.level}`;
   if (lines) lines.textContent = `Lines ${game.lines}`;
   if (combo) combo.textContent = `Combo ${game.combo}`;
   if (backToBack) backToBack.textContent = game.backToBackActive ? 'Back-to-back' : 'No streak';
+  if (timer) {
+    const display = game.getTimerDisplay();
+    timer.textContent = formatTimerStat(display.kind, display.ms);
+  }
 }
 
 function paintSidebars(game: Game, holdBox: HTMLDivElement, nextQueue: HTMLDivElement): void {
@@ -559,20 +593,43 @@ function indexCells(cells: Cell[]): Set<string> {
   return new Set(cells.map((cell) => `${cell.x},${cell.y}`));
 }
 
+function versusSecondary(): Game | null {
+  if (currentView === 'versus' && versus) return versus.player2;
+  if (currentView === 'online' && online) return online.player2;
+  return null;
+}
+
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.repeat || !controlTarget) return;
+  if (event.repeat) return;
   const target = event.target as HTMLElement | null;
   if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
-  const game = controlTarget;
 
   if (event.key === 'Escape') {
     event.preventDefault();
-    if (game.isOver()) return;
-    game.togglePause();
+    if (currentView === 'versus' && versus) {
+      versus.togglePause();
+      render();
+      return;
+    }
+    if (currentView === 'online' && online) {
+      online.togglePause();
+      render();
+      return;
+    }
+    if (!controlTarget || controlTarget.isOver()) return;
+    controlTarget.togglePause();
     render();
     return;
   }
 
+  const p2 = versusSecondary();
+  if (p2 && handleVersusP2(event, p2)) {
+    maybeUnlock();
+    return;
+  }
+
+  if (!controlTarget) return;
+  const game = controlTarget;
   if (game.isPaused() || game.isOver()) return;
 
   switch (event.key) {
@@ -617,11 +674,61 @@ function onKeyDown(event: KeyboardEvent): void {
   maybeUnlock();
 }
 
+function handleVersusP2(event: KeyboardEvent, game: Game): boolean {
+  if (game.isPaused() || game.isOver()) return false;
+  switch (event.key) {
+    case 'j':
+    case 'J':
+      event.preventDefault();
+      game.pressLeft();
+      return true;
+    case 'l':
+    case 'L':
+      event.preventDefault();
+      game.pressRight();
+      return true;
+    case 'k':
+    case 'K':
+      event.preventDefault();
+      game.pressSoftDrop();
+      return true;
+    case 'i':
+    case 'I':
+      event.preventDefault();
+      game.rotateCw();
+      return true;
+    case 'u':
+    case 'U':
+      game.rotateCcw();
+      return true;
+    case 'o':
+    case 'O':
+      game.rotate180();
+      return true;
+    case 'Enter':
+      event.preventDefault();
+      game.hardDrop();
+      return true;
+    case 'h':
+    case 'H':
+      game.holdPiece();
+      return true;
+    default:
+      return false;
+  }
+}
+
 function onKeyUp(event: KeyboardEvent): void {
-  if (!controlTarget) return;
-  if (event.key === 'ArrowLeft') controlTarget.releaseLeft();
-  if (event.key === 'ArrowRight') controlTarget.releaseRight();
-  if (event.key === 'ArrowDown') controlTarget.releaseSoftDrop();
+  if (controlTarget) {
+    if (event.key === 'ArrowLeft') controlTarget.releaseLeft();
+    if (event.key === 'ArrowRight') controlTarget.releaseRight();
+    if (event.key === 'ArrowDown') controlTarget.releaseSoftDrop();
+  }
+  const p2 = versusSecondary();
+  if (!p2) return;
+  if (event.key === 'j' || event.key === 'J') p2.releaseLeft();
+  if (event.key === 'l' || event.key === 'L') p2.releaseRight();
+  if (event.key === 'k' || event.key === 'K') p2.releaseSoftDrop();
 }
 
 function maybeUnlock(): void {
@@ -649,11 +756,12 @@ function startLoop(): void {
     const dt = now - last;
     last = now;
     marathon.update(dt);
+    soloGames.sprint.update(dt);
+    soloGames.ultra.update(dt);
+    soloGames.zen.update(dt);
     dailyGame?.update(dt);
-    versus?.player1.update(dt);
-    versus?.player2.update(dt);
-    online?.player1.update(dt);
-    online?.player2.update(dt);
+    versus?.update(dt);
+    online?.update(dt);
     paintView?.();
     requestAnimationFrame(tick);
   };
