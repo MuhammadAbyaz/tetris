@@ -32,6 +32,7 @@ export interface ReplayLog {
   noFail: boolean;
   lockDelayMs: number;
   lineClearAnimationMs: number;
+  elapsedMs: number;
   events: ReplayEvent[];
   outcome: { score: number; lines: number; level: number };
 }
@@ -73,6 +74,7 @@ export function createReplayRecorder(game: Game): ReplayRecorder {
         noFail: game.noFail,
         lockDelayMs: game.lockDelayMs,
         lineClearAnimationMs: game.lineClearAnimationMs,
+        elapsedMs: game.elapsedMs,
         events: [...events],
         outcome: { score: game.score, lines: game.lines, level: game.level },
       };

@@ -4,6 +4,7 @@ export { AccountClient, createAccountClient } from './accounts';
 export { requestOnlineMatch, startLocalVersus, usesLocalVersusGarbage } from './matchmaking';
 export { joinSpectator } from './spectator';
 export { getGlobalLeaderboard, submitScore } from './leaderboard';
+export { ScoreRejectedError, validateLeaderboardSubmission } from './score-validation';
 export {
   dailyDateKey,
   dailyPieceSequence,

@@ -37,14 +37,15 @@ export interface RotateResult {
   kick: Kick | null;
 }
 
+/** Default Guideline-inspired mapping using the Okabe–Ito colorblind-safe hues. */
 export const PIECE_COLORS: Record<PieceType, string> = {
-  I: '#00f0f0',
-  O: '#f0f000',
-  T: '#a000f0',
-  S: '#00f000',
-  Z: '#f00000',
-  J: '#0000f0',
-  L: '#f0a000',
+  I: '#0072b2',
+  O: '#f0e442',
+  T: '#cc79a7',
+  S: '#009e73',
+  Z: '#d55e00',
+  J: '#56b4e9',
+  L: '#e69f00',
 };
 
 export const GARBAGE_COLOR = '#6b7280';

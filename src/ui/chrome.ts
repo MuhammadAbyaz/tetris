@@ -21,9 +21,11 @@ export const PRIMARY_NAV: NavItem[] = [
 ];
 
 export function renderPrimaryNav(currentView: string): string {
-  const buttons = PRIMARY_NAV.map((item) => {
+  const activeIndex = PRIMARY_NAV.findIndex((item) => item.view === currentView);
+  const buttons = PRIMARY_NAV.map((item, index) => {
     const active = currentView === item.view ? ' is-active' : '';
-    return `<button type="button" data-nav="${item.view}" class="${active.trim()}" aria-label="${item.ariaLabel}" aria-current="${currentView === item.view ? 'page' : 'false'}">${item.label}</button>`;
+    const tabIndex = index === (activeIndex >= 0 ? activeIndex : 0) ? 0 : -1;
+    return `<button type="button" data-nav="${item.view}" data-keyboard-item="true" tabindex="${tabIndex}" class="${active.trim()}" aria-label="${item.ariaLabel}" aria-current="${currentView === item.view ? 'page' : 'false'}">${item.label}</button>`;
   }).join('');
   return `<nav class="nav" data-testid="primary-nav" aria-label="Main menu">${buttons}</nav>`;
 }

@@ -32,6 +32,7 @@ import {
   actionForTouchControl,
   applyAppearance,
   applyTouch,
+  applyTypography,
   browserStore,
   computeGameLayout,
   createAudioController,
@@ -56,6 +57,8 @@ import {
   type ReplayRecorder,
   type TouchControl,
 } from './player';
+import { applyInputWithPaint } from './runtime/input';
+import { classifyDevice, createFrameClock } from './runtime/loop';
 
 const backend = createBackend();
 const account = createAccountClient(backend);
@@ -114,6 +117,13 @@ let spectatorMatch: VersusSession | null = null;
 let controlTarget: Game | null = marathon;
 let toast = '';
 let paintView: (() => void) | null = null;
+const frameClock = createFrameClock({
+  deviceClass: classifyDevice({
+    userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent,
+    maxTouchPoints: typeof navigator === 'undefined' ? 0 : navigator.maxTouchPoints,
+    width: typeof window === 'undefined' ? 1280 : window.innerWidth,
+  }),
+});
 
 listenToGame(marathon);
 listenToGame(soloGames.sprint);
@@ -186,8 +196,21 @@ function seedDemoData(): void {
     /* already present */
   }
   if (backend.getLeaderboard('marathon').length === 0) {
-    submitScore(backend, { playerId: 'demo', displayName: 'Demo', mode: 'marathon', score: 2400 });
-    submitScore(backend, { playerId: 'cpu', displayName: 'CPU', mode: 'marathon', score: 1800 });
+    const game = createModeGame('marathon', { gravityMs: 1_000_000, pieceSequence: ['T', 'I'] });
+    const recorder = createReplayRecorder(game);
+    recorder.record('action', 'hardDrop');
+    dispatchAction(game, 'hardDrop');
+    try {
+      submitScore(backend, {
+        playerId: 'demo',
+        displayName: 'Demo',
+        mode: 'marathon',
+        score: game.score,
+        replay: recorder.finalize(),
+      });
+    } catch {
+      /* demo seed is best-effort */
+    }
   }
 }
 
@@ -294,7 +317,7 @@ function renderView(appearance = resolveAppearance(player.settings)): string {
 }
 
 function hubCard(view: View, title: string, copy: string): string {
-  return `<button type="button" class="hub-card" data-nav="${view}" aria-label="${title}">
+  return `<button type="button" class="hub-card" data-nav="${view}" data-keyboard-item="true" aria-label="${title}">
     <h2>${title}</h2>
     <p>${copy}</p>
   </button>`;
@@ -316,6 +339,7 @@ function soloShell(
     replayAvailable: hasLastReplay(store),
     appearanceTheme: appearance.themeId,
     boardBackground: appearance.boardBackground,
+    fontSize: player.settings.fontSize,
   }).html;
 }
 
@@ -752,6 +776,7 @@ function onKeyDown(event: KeyboardEvent): void {
 
   const p2 = versusSecondary();
   if (p2 && handleVersusP2(event, p2)) {
+    paintView?.();
     maybeUnlock();
     return;
   }
@@ -768,8 +793,19 @@ function onKeyDown(event: KeyboardEvent): void {
     return;
   }
   if (controlTarget.isPaused() || controlTarget.isOver()) return;
-  dispatchAction(controlTarget, action);
-  recorders.get(controlTarget)?.record('action', action);
+  const game = controlTarget;
+  applyInputWithPaint({
+    inputAtMs: event.timeStamp || performance.now(),
+    now: () => performance.now(),
+    apply: () => {
+      dispatchAction(game, action);
+      recorders.get(game)?.record('action', action);
+      return true;
+    },
+    paint: () => {
+      paintView?.();
+    },
+  });
   maybeUnlock();
 }
 
@@ -836,12 +872,18 @@ function maybeUnlock(): void {
     toast = `Achievement unlocked: ${latest.title}`;
     persistCurrentProgress();
     if (account.token && marathon.isOver()) {
-      submitScore(backend, {
-        playerId: account.userId ?? 'local',
-        displayName: 'You',
-        mode: currentView === 'daily' ? 'daily' : 'marathon',
-        score: marathon.score,
-      });
+      const recorder = recorders.get(marathon);
+      try {
+        submitScore(backend, {
+          playerId: account.userId ?? 'local',
+          displayName: 'You',
+          mode: currentView === 'daily' ? 'daily' : 'marathon',
+          score: marathon.score,
+          replay: recorder?.finalize(),
+        });
+      } catch {
+        toast = 'Score rejected by server validation';
+      }
     }
     render();
   }
@@ -852,23 +894,22 @@ function startLoop(): void {
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('resize', applyResponsiveLayout);
   applyResponsiveLayout();
-  let last = performance.now();
   const tick = (now: number) => {
-    const dt = now - last;
-    last = now;
-    const replayGame = activeReplay?.game ?? null;
-    if (activeReplay) activeReplay.advance(dt);
-    if (marathon !== replayGame) marathon.update(dt);
-    if (soloGames.sprint !== replayGame) soloGames.sprint.update(dt);
-    if (soloGames.ultra !== replayGame) soloGames.ultra.update(dt);
-    if (soloGames.zen !== replayGame) soloGames.zen.update(dt);
-    if (dailyGame && dailyGame !== replayGame) dailyGame.update(dt);
-    versus?.update(dt);
-    online?.update(dt);
-    for (const game of [marathon, soloGames.sprint, soloGames.ultra, soloGames.zen, dailyGame]) {
-      if (game) effectControllers.get(game)?.tick(dt);
-    }
-    paintView?.();
+    frameClock.tick(now, (dt) => {
+      const replayGame = activeReplay?.game ?? null;
+      if (activeReplay) activeReplay.advance(dt);
+      if (marathon !== replayGame) marathon.update(dt);
+      if (soloGames.sprint !== replayGame) soloGames.sprint.update(dt);
+      if (soloGames.ultra !== replayGame) soloGames.ultra.update(dt);
+      if (soloGames.zen !== replayGame) soloGames.zen.update(dt);
+      if (dailyGame && dailyGame !== replayGame) dailyGame.update(dt);
+      versus?.update(dt);
+      online?.update(dt);
+      for (const game of [marathon, soloGames.sprint, soloGames.ultra, soloGames.zen, dailyGame]) {
+        if (game) effectControllers.get(game)?.tick(dt);
+      }
+      paintView?.();
+    });
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
@@ -926,6 +967,7 @@ function bindTouchControls(): void {
         return;
       applyTouch(controlTarget, control);
       recorders.get(controlTarget)?.record('action', actionForTouchControl(control));
+      paintView?.();
       maybeUnlock();
     });
     button.addEventListener('pointerup', () => {
@@ -981,6 +1023,12 @@ function bindSettingsMenu(): void {
   contrast?.addEventListener('change', () => {
     player.changeDraft({ contrast: contrast.value as typeof player.draft.contrast });
     applyAppearance(player.draft, document.documentElement);
+    applyTypography(player.draft.fontSize, document.documentElement);
+  });
+  const fontSize = app.querySelector<HTMLSelectElement>('[data-testid="settings-font-size"]');
+  fontSize?.addEventListener('change', () => {
+    player.changeDraft({ fontSize: fontSize.value as typeof player.draft.fontSize });
+    applyTypography(player.draft.fontSize, document.documentElement);
   });
   app.querySelectorAll<HTMLButtonElement>('[data-binding]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -999,6 +1047,7 @@ function bindSettingsMenu(): void {
 
 function applyDocumentAppearance() {
   const source = player.menuOpen ? player.draft : player.settings;
+  applyTypography(source.fontSize, document.documentElement);
   return applyAppearance(source, document.documentElement);
 }
 
@@ -1062,3 +1111,9 @@ declare global {
   }
 }
 window.tetrisGame = marathon;
+
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {
+    /* offline cache is optional in unsupported environments */
+  });
+}

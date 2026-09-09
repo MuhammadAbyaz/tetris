@@ -7,6 +7,8 @@
   --text: #e8edf7;
   --muted: #8b95a8;
   --cell-size: 26px;
+  --font-scale: 1;
+  font-size: calc(16px * var(--font-scale, 1));
 }
 
 * {
@@ -56,6 +58,7 @@ body {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
   min-width: 72px;
+  font-size: 1rem;
 }
 
 .hud-actions {
@@ -391,6 +394,7 @@ html[data-theme='forest'] body {
   border-radius: 8px;
   padding: 8px 10px;
   cursor: pointer;
+  font-size: 0.95rem;
 }
 
 .nav button.is-active,
@@ -548,6 +552,7 @@ html[data-theme='forest'] body {
   border-radius: 12px;
   padding: 16px;
   max-width: 100%;
+  font-size: 1rem;
 }
 
 .settings-block {
