@@ -6,6 +6,7 @@ import {
   type GameOverReason,
   type TimerKind,
 } from '../game/engine';
+import type { EffectsController } from '../player/effects';
 import { renderTouchControls } from '../player/touch';
 
 export type ScreenView = 'menu' | 'playing';
@@ -62,6 +63,10 @@ export interface GameplayScreenOptions {
   testId?: string;
   highScore?: number;
   muted?: boolean;
+  effects?: EffectsController;
+  replayAvailable?: boolean;
+  appearanceTheme?: string;
+  boardBackground?: string;
 }
 
 export function formatElapsed(ms: number): string {
@@ -98,6 +103,10 @@ export function renderGameplayShell(input: {
   testId?: string;
   highScore?: number;
   muted?: boolean;
+  effects?: EffectsController;
+  replayAvailable?: boolean;
+  appearanceTheme?: string;
+  boardBackground?: string;
 }): GameplayRender {
   return createGameplayScreen({
     game: input.game,
@@ -105,6 +114,10 @@ export function renderGameplayShell(input: {
     testId: input.testId,
     highScore: input.highScore,
     muted: input.muted,
+    effects: input.effects,
+    replayAvailable: input.replayAvailable,
+    appearanceTheme: input.appearanceTheme,
+    boardBackground: input.boardBackground,
   }).render();
 }
 
@@ -119,6 +132,10 @@ export class GameplayScreen {
   testId: string;
   highScore: number;
   muted: boolean;
+  effects: EffectsController | null;
+  replayAvailable: boolean;
+  appearanceTheme: string;
+  boardBackground: string;
 
   constructor(options: GameplayScreenOptions = {}) {
     this.game = options.game ?? createGame(options.gameOptions ?? {});
@@ -126,6 +143,10 @@ export class GameplayScreen {
     this.testId = options.testId ?? 'gameplay';
     this.highScore = options.highScore ?? 0;
     this.muted = options.muted ?? false;
+    this.effects = options.effects ?? null;
+    this.replayAvailable = options.replayAvailable ?? false;
+    this.appearanceTheme = options.appearanceTheme ?? 'classic';
+    this.boardBackground = options.boardBackground ?? '#07090d';
   }
 
   render(): GameplayRender {
@@ -238,7 +259,7 @@ export class GameplayScreen {
       ? `<div class="hud-stat" data-testid="hud-timer" data-timer-kind="${hud.timerKind}">${formatTimerStat(hud.timerKind, hud.timerMs)}</div>`
       : '';
     return `
-    <div class="shell" data-testid="${this.testId}-shell" data-layout="hold-playfield-next" data-mode="${this.game.mode}">
+    <div class="shell" data-testid="${this.testId}-shell" data-layout="hold-playfield-next" data-mode="${this.game.mode}" data-theme="${escapeHtml(this.appearanceTheme)}">
       <div class="hud-panel" data-testid="hud-panel" data-always-visible="true" data-region="score-panel">
         <div class="hud-stat" data-testid="hud-score">Score ${hud.score}</div>
         <div class="hud-stat" data-testid="hud-high-score">Best ${this.highScore}</div>
@@ -248,8 +269,8 @@ export class GameplayScreen {
         <div class="hud-stat" data-testid="hud-back-to-back">${hud.backToBack ? 'Back-to-back' : 'No streak'}</div>
         ${timer}
         <div class="hud-actions">
-          <button type="button" data-action="toggle-mute" data-testid="mute-toggle" data-muted="${this.muted}">${this.muted ? 'Unmute' : 'Mute'}</button>
-          <button type="button" data-action="open-settings" data-testid="open-settings">Settings</button>
+          <button type="button" data-action="toggle-mute" data-testid="mute-toggle" data-muted="${this.muted}" aria-label="${this.muted ? 'Unmute sound' : 'Mute sound'}">${this.muted ? 'Unmute' : 'Mute'}</button>
+          <button type="button" data-action="open-settings" data-testid="open-settings" aria-label="Open settings">Settings</button>
         </div>
       </div>
       <aside class="panel hold-panel">
@@ -262,14 +283,16 @@ export class GameplayScreen {
           <div
             class="playfield"
             data-testid="playfield"
+            data-theme="${escapeHtml(this.appearanceTheme)}"
             data-obscured="${paused || over ? 'true' : 'false'}"
-            style="--cols:${VISIBLE_COLS}"
+            style="--cols:${VISIBLE_COLS};--board-bg:${escapeHtml(this.boardBackground)}"
           ></div>
+          ${this.effects?.renderOverlays() ?? ''}
           ${
             paused
               ? `<div class="pause-overlay" data-testid="pause-overlay" data-covers-playfield="true" data-opaque="true">
                   <p>Paused</p>
-                  <button type="button" data-action="resume">Resume</button>
+                  <button type="button" data-action="resume" aria-label="Resume game">Resume</button>
                 </div>`
               : ''
           }
@@ -290,8 +313,9 @@ export class GameplayScreen {
                     }
                   </dl>
                   <div class="actions">
-                    <button type="button" data-action="restart" data-testid="game-over-restart">Restart</button>
-                    <button type="button" data-action="menu" data-testid="game-over-menu">Menu</button>
+                    <button type="button" data-action="restart" data-testid="game-over-restart" aria-label="Restart game">Restart</button>
+                    <button type="button" data-action="replay-last" data-testid="replay-last-game" aria-label="Replay last game" ${this.replayAvailable ? '' : 'disabled'}>Replay last game</button>
+                    <button type="button" data-action="menu" data-testid="game-over-menu" aria-label="Return to main menu">Menu</button>
                   </div>
                 </div>`
               : ''

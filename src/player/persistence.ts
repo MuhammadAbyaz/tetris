@@ -1,4 +1,6 @@
 import { cloneBindings, DEFAULT_BINDINGS, type KeyBindings } from './controls';
+import { DEFAULT_MUSIC_TRACK, isMusicTrackId, type MusicTrackId } from './audio';
+import { isContrastLevel, isThemeId, type ContrastLevel, type ThemeId } from './themes';
 
 export const PLAYER_STORAGE_KEY = 'tetris.player.v1';
 
@@ -14,6 +16,11 @@ export interface PlayerSettings {
   dasMs: number;
   arrMs: number;
   bindings: KeyBindings;
+  musicEnabled: boolean;
+  musicTrack: MusicTrackId;
+  theme: ThemeId;
+  colorblindPalette: boolean;
+  contrast: ContrastLevel;
 }
 
 export interface PlayerPersistState {
@@ -27,6 +34,11 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   dasMs: 167,
   arrMs: 33,
   bindings: cloneBindings(DEFAULT_BINDINGS),
+  musicEnabled: true,
+  musicTrack: DEFAULT_MUSIC_TRACK,
+  theme: 'classic',
+  colorblindPalette: false,
+  contrast: 'normal',
 };
 
 export function createMemoryStore(initial: Record<string, string> = {}): KeyValueStore {
@@ -115,6 +127,20 @@ function normalizeSettings(settings: Partial<PlayerSettings>): PlayerSettings {
       ...cloneBindings(DEFAULT_BINDINGS),
       ...(settings.bindings ?? {}),
     },
+    musicEnabled: settings.musicEnabled ?? DEFAULT_PLAYER_SETTINGS.musicEnabled,
+    musicTrack: (() => {
+      const track = String(settings.musicTrack ?? '');
+      return isMusicTrackId(track) ? track : DEFAULT_PLAYER_SETTINGS.musicTrack;
+    })(),
+    theme: (() => {
+      const theme = String(settings.theme ?? '');
+      return isThemeId(theme) ? theme : DEFAULT_PLAYER_SETTINGS.theme;
+    })(),
+    colorblindPalette: Boolean(settings.colorblindPalette),
+    contrast: (() => {
+      const contrast = String(settings.contrast ?? '');
+      return isContrastLevel(contrast) ? contrast : DEFAULT_PLAYER_SETTINGS.contrast;
+    })(),
   };
 }
 

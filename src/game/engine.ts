@@ -532,6 +532,7 @@ export class Game {
   readonly lockResetLimit: number;
   readonly lineClearAnimationMs: number;
 
+  dealtPieces: PieceType[] = [];
   private nextQueue: PieceType[] = [];
   private sequence: PieceType[];
   private bag: ReturnType<typeof createSevenBag>;
@@ -1175,7 +1176,9 @@ export class Game {
 
   private fillQueue(): void {
     while (this.nextQueue.length < this.nextQueueSize) {
-      this.nextQueue.push(this.sequence.length > 0 ? this.sequence.shift()! : this.bag.next());
+      const piece = this.sequence.length > 0 ? this.sequence.shift()! : this.bag.next();
+      this.nextQueue.push(piece);
+      this.dealtPieces.push(piece);
     }
   }
 
