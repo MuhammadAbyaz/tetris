@@ -498,6 +498,7 @@ function paintPlayfield(game: Game, playfieldCells: HTMLDivElement[]): void {
   const visible = game.getVisiblePlayfield();
   const active = indexCells(game.getActiveCells());
   const ghost = indexCells(game.getGhostPreview().cells);
+  const clearing = new Set(game.getClearingRows());
 
   for (let row = 0; row < VISIBLE_ROWS; row += 1) {
     const y = VISIBLE_ROWS - 1 - row;
@@ -506,9 +507,13 @@ function paintPlayfield(game: Game, playfieldCells: HTMLDivElement[]): void {
       const locked = visible[row]![x];
       const falling = active.has(`${x},${y}`);
       const isGhost = ghost.has(`${x},${y}`);
+      const isClearing = clearing.has(y) && locked !== null;
       let kind = 'empty';
       let color = '';
-      if (locked) {
+      if (isClearing) {
+        kind = 'clearing';
+        color = cellColor(locked);
+      } else if (locked) {
         kind = 'locked';
         color = cellColor(locked);
       } else if (falling && game.active) {
