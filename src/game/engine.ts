@@ -6,6 +6,7 @@ export const ROTATION_COUNT = 4;
 
 export const PIECE_TYPES = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'] as const;
 export type PieceType = (typeof PIECE_TYPES)[number];
+export type LockedCell = PieceType | 'G';
 export type Rotation = 0 | 1 | 2 | 3;
 export type Kick = readonly [number, number];
 
@@ -35,6 +36,16 @@ export const PIECE_COLORS: Record<PieceType, string> = {
   J: '#0000f0',
   L: '#f0a000',
 };
+
+export const GARBAGE_COLOR = '#6b7280';
+export const LINE_CLEAR_SCORES = [0, 100, 300, 500, 800] as const;
+
+export interface LockResult {
+  linesCleared: number;
+  isTetris: boolean;
+  scoreAwarded: number;
+  lockedType: PieceType;
+}
 
 const SHAPES: Record<PieceType, Cell[][]> = {
   I: [
@@ -417,25 +428,29 @@ export class Game {
   readonly softDropPointsPerCell = 1;
   readonly hardDropPointsPerCell = 2;
 
-  board: (PieceType | null)[][];
+  board: (LockedCell | null)[][];
   active: ActivePiece | null = null;
   hold: PieceType | null = null;
   holdAvailable = true;
   score = 0;
+  lines = 0;
   gravityMs: number;
   softDropMs: number;
   dasMs: number;
   arrMs: number;
   nextQueueSize: number;
+  lastLock: LockResult | null = null;
 
   private nextQueue: PieceType[] = [];
   private sequence: PieceType[];
   private bag: ReturnType<typeof createSevenBag>;
+  private rng: () => number;
   private gravityElapsed = 0;
   private softDropElapsed = 0;
   private softDropHeld = false;
   private moveRepeat: MoveRepeat | null = null;
   private gameOver = false;
+  private lockListeners: Array<(result: LockResult) => void> = [];
 
   constructor(options: GameOptions = {}) {
     this.gravityMs = options.gravityMs ?? 800;
@@ -444,7 +459,8 @@ export class Game {
     this.arrMs = options.arrMs ?? 33;
     this.nextQueueSize = Math.min(5, Math.max(3, options.nextQueueSize ?? 5));
     this.sequence = [...(options.pieceSequence ?? [])];
-    this.bag = createSevenBag(options.rng);
+    this.rng = options.rng ?? Math.random;
+    this.bag = createSevenBag(this.rng);
     this.board = Array.from({ length: TOTAL_ROWS }, () =>
       Array.from({ length: VISIBLE_COLS }, () => null),
     );
@@ -471,8 +487,41 @@ export class Game {
     };
   }
 
-  getVisiblePlayfield(): (PieceType | null)[][] {
-    const visible: (PieceType | null)[][] = [];
+  isOver(): boolean {
+    return this.gameOver;
+  }
+
+  onLock(listener: (result: LockResult) => void): () => void {
+    this.lockListeners.push(listener);
+    return () => {
+      this.lockListeners = this.lockListeners.filter((fn) => fn !== listener);
+    };
+  }
+
+  injectGarbage(count: number, holeColumn?: number): void {
+    if (count <= 0 || this.gameOver) return;
+    const hole =
+      holeColumn !== undefined
+        ? ((holeColumn % VISIBLE_COLS) + VISIBLE_COLS) % VISIBLE_COLS
+        : Math.floor(this.rng() * VISIBLE_COLS);
+
+    for (let i = 0; i < count; i += 1) {
+      if (this.board[TOTAL_ROWS - 1]!.some((cell) => cell !== null)) {
+        this.gameOver = true;
+      }
+      for (let y = TOTAL_ROWS - 1; y > 0; y -= 1) {
+        this.board[y] = this.board[y - 1]!;
+      }
+      this.board[0] = Array.from({ length: VISIBLE_COLS }, (_, x) => (x === hole ? null : 'G'));
+    }
+
+    if (this.active && !this.canPlace(this.active) && !this.tryMove(0, 1)) {
+      this.gameOver = true;
+    }
+  }
+
+  getVisiblePlayfield(): (LockedCell | null)[][] {
+    const visible: (LockedCell | null)[][] = [];
     for (let displayRow = 0; displayRow < VISIBLE_ROWS; displayRow += 1) {
       const y = VISIBLE_ROWS - 1 - displayRow;
       visible.push([...this.board[y]!]);
@@ -686,14 +735,46 @@ export class Game {
 
   private lockActive(): void {
     if (!this.active) return;
+    const lockedType = this.active.type;
     for (const cell of this.cellsOf(this.active)) {
       if (this.inBounds(cell.x, cell.y)) {
         this.board[cell.y]![cell.x] = this.active.type;
       }
     }
+    const linesCleared = this.clearFullLines();
+    const scoreAwarded = LINE_CLEAR_SCORES[linesCleared] ?? 0;
+    this.score += scoreAwarded;
+    this.lines += linesCleared;
+    this.lastLock = {
+      linesCleared,
+      isTetris: linesCleared === 4,
+      scoreAwarded,
+      lockedType,
+    };
     this.holdAvailable = true;
     this.gravityElapsed = 0;
     this.spawn(this.takePiece());
+    for (const listener of this.lockListeners) {
+      listener(this.lastLock);
+    }
+  }
+
+  private clearFullLines(): number {
+    const remaining: (LockedCell | null)[][] = [];
+    let cleared = 0;
+    for (let y = 0; y < TOTAL_ROWS; y += 1) {
+      const row = this.board[y]!;
+      if (row.every((cell) => cell !== null)) {
+        cleared += 1;
+      } else {
+        remaining.push(row);
+      }
+    }
+    while (remaining.length < TOTAL_ROWS) {
+      remaining.push(Array.from({ length: VISIBLE_COLS }, () => null));
+    }
+    this.board = remaining;
+    return cleared;
   }
 
   private spawn(type: PieceType): void {
