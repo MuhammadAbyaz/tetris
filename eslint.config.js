@@ -13,4 +13,15 @@ export default tseslint.config(
       sourceType: 'module',
     },
   },
+  {
+    files: ['public/sw.js'],
+    languageOptions: {
+      globals: {
+        self: 'readonly',
+        caches: 'readonly',
+        fetch: 'readonly',
+        clients: 'readonly',
+      },
+    },
+  },
 );
