@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0d12" />
+    <title>Tetris — shipped work (HTML documentation)</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        --bg: #0b0d12;
+        --panel: #161a22;
+        --line: #2a3140;
+        --text: #e8edf7;
+        --muted: #8b95a8;
+        --accent: #7dd3fc;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+      }
+      body {
+        min-height: 100vh;
+        background: radial-gradient(circle at top, #1b2230 0%, transparent 45%), var(--bg);
+        color: var(--text);
+        padding: 32px 20px 64px;
+      }
+      main {
+        max-width: 760px;
+        margin: 0 auto;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 28px 32px 36px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 1.75rem;
+      }
+      .lede {
+        color: var(--muted);
+        margin: 0 0 24px;
+        line-height: 1.5;
+      }
+      h2 {
+        margin: 24px 0 8px;
+        font-size: 1.05rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+      ul {
+        margin: 0;
+        padding-left: 1.2rem;
+      }
+      li {
+        margin: 0.35rem 0;
+        line-height: 1.45;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.9em;
+      }
+      .meta {
+        margin-top: 28px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Tetris (project TETR)</h1>
+      <p class="lede">
+        Live HTML documentation of work already shipped in this repository. The same map lives as
+        comments in <code>index.html</code> (TETR-62). This page makes that documentation readable
+        in a browser (TETR-63).
+      </p>
+
+      <h2>Toolchain (TETR-61, TETR-60)</h2>
+      <ul>
+        <li>TypeScript + Vite 8 local-first static frontend (no required backend)</li>
+        <li>
+          Vitest for <code>src/**/*.test.ts</code>, ESLint + Prettier, Node 20 via
+          <code>.nvmrc</code>
+        </li>
+        <li>
+          <code>npm run dev / test / lint / build / preview</code>; production assets in
+          <code>dist/</code>
+        </li>
+      </ul>
+
+      <h2>Game engine (<code>src/game</code>)</h2>
+      <ul>
+        <li>10x20 visible matrix plus 4 buffer rows</li>
+        <li>Seven tetrominoes (I O T S Z J L) with Super Rotation System kicks</li>
+        <li>Hold, 5-piece next queue, seven-bag randomizer</li>
+        <li>DAS/ARR handling, soft drop, hard drop, 180 rotate</li>
+        <li>Guideline scoring: line clears, T-Spins (including mini), combos, back-to-back</li>
+        <li>Level gravity curve, lock delay with reset limit, line-clear animation</li>
+        <li>Block-out and top-out detection</li>
+        <li>Play modes: Marathon, Sprint 40, Ultra timed, Zen (no fail), Versus garbage</li>
+      </ul>
+
+      <h2>Player shell (<code>src/player</code>, <code>src/ui</code>, <code>src/runtime</code>)</h2>
+      <ul>
+        <li>HUD: score, level, lines, combo, back-to-back, high score, mode timer</li>
+        <li>Pause overlay and game-over summary</li>
+        <li>Remappable keys, touch controls, DAS/ARR settings</li>
+        <li>
+          Persistence (local storage), music/SFX, themes, colorblind palette, contrast, type scale
+        </li>
+        <li>Line-clear and level-up effects, last-game replay, local per-mode leaderboard</li>
+        <li>Responsive breakpoints, requestAnimationFrame loop, input paint timing</li>
+        <li>Offline single-player (service worker + PWA manifest)</li>
+      </ul>
+
+      <h2>Social stretch (<code>src/social</code>)</h2>
+      <ul>
+        <li>Local and online versus with garbage attacks; spectator view</li>
+        <li>Daily seeded challenge, accounts + cloud save, achievements</li>
+        <li>Global leaderboard with server-side score validation</li>
+      </ul>
+
+      <h2>Bootstrap</h2>
+      <ul>
+        <li>
+          <code>#app</code> is the mount for hub, playfields, settings, ranks, account, trophies
+        </li>
+        <li>
+          <code>/src/main.ts</code> wires engine + player session + social backend + frame loop
+        </li>
+        <li>
+          <code>/public/manifest.webmanifest</code> and <code>/public/sw.js</code> enable
+          standalone/offline play
+        </li>
+      </ul>
+
+      <p class="meta">
+        Source of truth in git: comments on <code>index.html</code> plus this static page at
+        <code>/documentation.html</code>.
+      </p>
+    </main>
+  </body>
+</html>
