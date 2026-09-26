@@ -1,15 +1,71 @@
 <!doctype html>
+<!--
+  Tetris (project TETR) HTML entry.
+
+  This page is the only HTML shell. Vite loads /src/main.ts, which mounts the
+  full game into #app. The comments below document what this repository has
+  already shipped so later tickets do not rediscover the same work.
+
+  Toolchain (TETR-61, TETR-60)
+  - TypeScript + Vite 8 local-first static frontend (no required backend)
+  - Vitest for src/**/*.test.ts, ESLint + Prettier, Node 20 via .nvmrc
+  - npm run dev / test / lint / build / preview; production assets in dist/
+
+  Game engine (src/game)
+  - 10x20 visible matrix plus 4 buffer rows
+  - Seven tetrominoes (I O T S Z J L) with Super Rotation System kicks
+  - Hold, 5-piece next queue, seven-bag randomizer
+  - DAS/ARR handling, soft drop, hard drop, 180 rotate
+  - Guideline scoring: line clears, T-Spins (including mini), combos, back-to-back
+  - Level gravity curve, lock delay with reset limit, line-clear animation
+  - Block-out and top-out detection
+  - Play modes: Marathon, Sprint 40, Ultra timed, Zen (no fail), Versus garbage
+
+  Player shell (src/player, src/ui, src/runtime)
+  - HUD: score, level, lines, combo, back-to-back, high score, mode timer
+  - Pause overlay and game-over summary
+  - Remappable keys, touch controls, DAS/ARR settings
+  - Persistence (local storage), music/SFX, themes, colorblind palette, contrast, type scale
+  - Line-clear and level-up effects, last-game replay, local per-mode leaderboard
+  - Responsive breakpoints, requestAnimationFrame loop, input paint timing
+  - Offline single-player (service worker + PWA manifest)
+
+  Social stretch (src/social)
+  - Local and online versus with garbage attacks; spectator view
+  - Daily seeded challenge, accounts + cloud save, achievements
+  - Global leaderboard with server-side score validation
+
+  Bootstrap
+  - #app is the mount for hub, playfields, settings, ranks, account, trophies
+  - /src/main.ts wires engine + player session + social backend + frame loop
+  - /public/manifest.webmanifest and /public/sw.js enable standalone/offline play
+
+  Live documentation (TETR-63)
+  - The same write-up is hosted as a visible page at /documentation.html
+-->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Dark shell theme used by src/style.css and the PWA status bar -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0b0d12" />
+    <!-- Registers the app as installable; start URL is the hub in index.html -->
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Tetris</title>
   </head>
   <body>
+    <!--
+      Mount point for the client app. src/main.ts replaces this node with:
+      top nav (hub, modes, versus, daily, online, spectate, ranks, account,
+      trophies, settings), then the active view (playfield HUD, dual boards,
+      or panels). Keyboard, pointer, and rAF painting all target this tree.
+    -->
     <div id="app"></div>
+    <!--
+      Application bootstrap. Imports the Guideline engine, player settings,
+      audio/themes/replay, social backend, and starts the frame clock.
+    -->
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
